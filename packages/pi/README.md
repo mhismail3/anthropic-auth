@@ -1,6 +1,6 @@
 # @cortexkit/pi-anthropic-auth
 
-Pi package for CortexKit Anthropic OAuth support. It overrides Pi's built-in `anthropic` provider with a CortexKit provider extension backed by the shared `@cortexkit/anthropic-auth-core` package.
+Pi package for CortexKit Anthropic OAuth support. It overrides Pi's built-in `anthropic` provider with the display name `Anthropic (CortexKit)` and a CortexKit provider extension backed by the shared `@cortexkit/anthropic-auth-core` package.
 
 The provider maps Anthropic's Claude Code tool-name aliases back only through the exact tool-name snapshot sent in that request. Ambiguous aliases fail before dispatch; unknown response names remain unknown rather than being case-folded onto an executable host tool.
 

@@ -152,7 +152,7 @@ export default async function cortexKitPiAnthropicAuth(
   })
 
   const configuration: ProviderConfig = {
-    name: 'Anthropic (CortexKit OAuth)',
+    name: 'Anthropic (CortexKit)',
     baseUrl: 'https://api.anthropic.com',
     api: 'cortexkit-anthropic-messages',
     models: [

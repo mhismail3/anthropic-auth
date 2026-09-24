@@ -63,6 +63,18 @@ function mockPi() {
 }
 
 describe('cortexKitPiAnthropicAuth provider registration', () => {
+  test('uses the concise CortexKit provider label', async () => {
+    const { pi, providers } = mockPi()
+
+    await cortexKitPiAnthropicAuth(pi)
+
+    expect(providers.get('anthropic')).toMatchObject({
+      name: 'Anthropic (CortexKit)',
+      api: 'cortexkit-anthropic-messages',
+      baseUrl: 'https://api.anthropic.com',
+    })
+  })
+
   test('exposes Claude Sonnet 5 in the Pi Anthropic catalog', async () => {
     const { pi, providers } = mockPi()
 
