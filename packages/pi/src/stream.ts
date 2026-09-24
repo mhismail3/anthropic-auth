@@ -81,7 +81,6 @@ import {
   type StopReason,
   type TextContent,
   type ThinkingContent,
-  type Tool,
   type ToolCall,
 } from '@earendil-works/pi-ai'
 
@@ -566,7 +565,7 @@ async function sendAnthropicRequest(options: {
   oauthAccountId?: string
   route?: string
   effortTransitions?: readonly MidConversationEffortTransition[]
-  onResolvedTools?: (tools: Tool[]) => void
+  onResolvedToolNames?: (toolNames: ReadonlyMap<string, string>) => void
 }): Promise<Response> {
   await ensurePiMainAccountId(options.storagePath)
   const storage = await loadAccounts(options.storagePath)
@@ -603,7 +602,7 @@ async function sendAnthropicRequest(options: {
             accountIdentity,
           )
         : undefined
-  const { body, bodyText, hostTools } = await buildAnthropicRequest(
+  const { body, bodyText, toolNames } = await buildAnthropicRequest(
     options.model.id,
     options.context,
     options.streamOptions,
@@ -620,7 +619,7 @@ async function sendAnthropicRequest(options: {
         : getThinkingPrefixMismatchBehavior(storage),
     },
   )
-  options.onResolvedTools?.(hostTools)
+  options.onResolvedToolNames?.(toolNames)
   const fastMode = body.speed === 'fast'
   const headers = options.apiAccount
     ? configureApiRouteHeaders(options.apiAccount, fastMode)
@@ -869,7 +868,7 @@ async function executeWithFallback(options: {
   primaryAccessToken: string
   storagePath: string
   effortTransitions?: readonly MidConversationEffortTransition[]
-  onResolvedTools?: (tools: Tool[]) => void
+  onResolvedToolNames?: (toolNames: ReadonlyMap<string, string>) => void
 }): Promise<Response> {
   await ensurePiMainAccountId(options.storagePath)
   let storage = await loadAccounts(options.storagePath)
@@ -1641,7 +1640,7 @@ export function streamCortexKitAnthropic(
         getClaustrumMode(await loadAccounts(storagePath)) !== 'claustrum'
       )
         throw new Error('Missing Anthropic OAuth access token')
-      let hostTools: Tool[] = []
+      let toolNames: ReadonlyMap<string, string> = new Map()
       const response = await executeWithFallback({
         model,
         context,
@@ -1649,8 +1648,8 @@ export function streamCortexKitAnthropic(
         primaryAccessToken: accessToken,
         storagePath,
         effortTransitions,
-        onResolvedTools: (tools) => {
-          hostTools = tools
+        onResolvedToolNames: (names) => {
+          toolNames = names
         },
       })
 
@@ -1706,7 +1705,7 @@ export function streamCortexKitAnthropic(
             output.content.push({
               type: 'toolCall',
               id: String(block.id),
-              name: fromClaudeCodeToolName(String(block.name), hostTools),
+              name: fromClaudeCodeToolName(String(block.name), toolNames),
               arguments: {},
               partialJson: '',
               index: event.index,
