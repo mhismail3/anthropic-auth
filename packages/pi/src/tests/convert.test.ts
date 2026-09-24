@@ -1427,17 +1427,24 @@ describe('buildAnthropicRequest — Opus 5.5 thinking', () => {
     expect(body.output_config).toBeUndefined()
   })
 
-  test('maps reasoning to output_config effort for Opus 5.5', async () => {
-    const { body } = await buildAnthropicRequest(
-      'claude-opus-5-5',
-      { messages: [userMsg('hello')], systemPrompt: 'test', tools: [] } as any,
-      { reasoning: 'medium' } as any,
-      defaultCache,
-    )
+  test.each(['low', 'medium', 'high', 'xhigh', 'max'] as const)(
+    'maps %s reasoning to the matching Opus 5.5 adaptive effort',
+    async (effort) => {
+      const { body } = await buildAnthropicRequest(
+        'claude-opus-5-5',
+        {
+          messages: [userMsg('hello')],
+          systemPrompt: 'test',
+          tools: [],
+        } as any,
+        { reasoning: effort } as any,
+        defaultCache,
+      )
 
-    expect(body.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
-    expect(body.output_config).toEqual({ effort: 'medium' })
-  })
+      expect(body.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
+      expect(body.output_config).toEqual({ effort })
+    },
+  )
 })
 
 describe('Anthropic tool-name snapshots', () => {

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { saveAccounts } from '@cortexkit/anthropic-auth-core'
+import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
 
 import cortexKitPiAnthropicAuth from '../index'
@@ -161,11 +162,34 @@ describe('cortexKitPiAnthropicAuth provider registration', () => {
       id: 'claude-opus-5-5',
       name: 'Claude Opus 5.5',
       reasoning: true,
+      thinkingLevelMap: {
+        off: null,
+        minimal: null,
+        xhigh: 'xhigh',
+        max: 'max',
+      },
       input: ['text', 'image'],
       cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 8 },
       contextWindow: 1_000_000,
       maxTokens: 128_000,
     })
+    expect(
+      getSupportedThinkingLevels(
+        opus55! as unknown as Parameters<typeof getSupportedThinkingLevels>[0],
+      ),
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+
+    const { buildAnthropicRequest } = await import('../convert.ts')
+    for (const effort of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+      const { body } = await buildAnthropicRequest(
+        'claude-opus-5-5',
+        { messages: [], systemPrompt: '', tools: [] } as any,
+        { reasoning: effort } as any,
+        { enabled: false, mode: 'explicit' },
+      )
+      expect(body.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
+      expect(body.output_config).toEqual({ effort })
+    }
   })
 
   test('exposes Claude Opus 5 in the Pi Anthropic catalog', async () => {
@@ -176,6 +200,11 @@ describe('cortexKitPiAnthropicAuth provider registration', () => {
     const opus5 = providers
       .get('anthropic')
       ?.models?.find((model) => model.id === 'claude-opus-5')
+    expect(
+      getSupportedThinkingLevels(
+        opus5! as unknown as Parameters<typeof getSupportedThinkingLevels>[0],
+      ),
+    ).toEqual(['off', 'minimal', 'low', 'medium', 'high'])
     expect(opus5).toMatchObject({
       id: 'claude-opus-5',
       name: 'Claude Opus 5',

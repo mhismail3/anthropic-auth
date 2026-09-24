@@ -179,6 +179,15 @@ export default async function cortexKitPiAnthropicAuth(
         id: 'claude-opus-5-5',
         name: 'Claude Opus 5.5',
         reasoning: true,
+        // Opus 5.5 always uses adaptive thinking: it cannot disable thinking or
+        // distinguish generic `minimal` from Anthropic's `low` effort. Advertise
+        // only actual API effort choices, including the supported extended levels.
+        thinkingLevelMap: {
+          off: null,
+          minimal: null,
+          xhigh: 'xhigh',
+          max: 'max',
+        },
         input: textImageInput(),
         cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 8 },
         contextWindow: 1_000_000,
