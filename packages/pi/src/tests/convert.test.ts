@@ -529,6 +529,17 @@ describe('buildAnthropicRequest — Fable/Mythos thinking', () => {
     expect(body.output_config).toEqual({ effort: 'high' })
   })
 
+  test('maps adaptive minimal to Anthropic low effort', async () => {
+    const { body } = await buildAnthropicRequest(
+      'claude-fable-5',
+      { messages: [userMsg('hello')], systemPrompt: 'test', tools: [] } as any,
+      { reasoning: 'minimal' } as any,
+      defaultCache,
+    )
+
+    expect(body.output_config).toEqual({ effort: 'low' })
+  })
+
   test('requests summarized adaptive thinking for Claude Fable 5 without explicit reasoning', async () => {
     const { body } = await buildAnthropicRequest(
       'claude-fable-5',

@@ -4,9 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { saveAccounts } from '@cortexkit/anthropic-auth-core'
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
+import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic'
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
 
 import cortexKitPiAnthropicAuth from '../index'
+import {
+  ANTHROPIC_SDK_MODELS,
+  buildCortexKitAnthropicModels,
+} from '../model-catalog'
 
 let tempDir: string | undefined
 const originalFetch = globalThis.fetch
@@ -165,11 +170,14 @@ describe('cortexKitPiAnthropicAuth provider registration', () => {
       thinkingLevelMap: {
         off: null,
         minimal: null,
+        low: 'low',
+        medium: 'medium',
+        high: 'high',
         xhigh: 'xhigh',
         max: 'max',
       },
       input: ['text', 'image'],
-      cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 8 },
+      cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
       contextWindow: 1_000_000,
       maxTokens: 128_000,
     })
@@ -204,7 +212,7 @@ describe('cortexKitPiAnthropicAuth provider registration', () => {
       getSupportedThinkingLevels(
         opus5! as unknown as Parameters<typeof getSupportedThinkingLevels>[0],
       ),
-    ).toEqual(['off', 'minimal', 'low', 'medium', 'high'])
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     expect(opus5).toMatchObject({
       id: 'claude-opus-5',
       name: 'Claude Opus 5',
@@ -214,6 +222,229 @@ describe('cortexKitPiAnthropicAuth provider registration', () => {
       contextWindow: 1_000_000,
       maxTokens: 128_000,
     })
+  })
+})
+
+describe('SDK-backed Anthropic model catalog', () => {
+  const expectedIds = [
+    'claude-fable-5',
+    'claude-fable-5-1',
+    'claude-haiku-4-5',
+    'claude-haiku-4-5-20251001',
+    'claude-opus-4-5',
+    'claude-opus-4-5-20251101',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-opus-5-5',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-5-20250929',
+    'claude-sonnet-5',
+    'claude-sonnet-5-5',
+    'claude-mythos-5',
+    'claude-mythos-5-1',
+  ]
+
+  test('registers exact SDK names and IDs under CortexKit api and preserves SDK metadata', async () => {
+    const original = structuredClone(ANTHROPIC_SDK_MODELS)
+    const { pi, providers } = mockPi()
+    await cortexKitPiAnthropicAuth(pi)
+    const models = providers.get('anthropic')?.models ?? []
+
+    expect(models.map((model) => model.id)).toEqual(expectedIds)
+    expect(new Set(models.map((model) => model.id)).size).toBe(models.length)
+    expect(
+      models.every((model) => model.api === 'cortexkit-anthropic-messages'),
+    ).toBe(true)
+    expect(
+      models.find((model) => model.id === 'claude-haiku-4-5'),
+    ).toMatchObject({
+      name: 'Claude Haiku 4.5 (latest)',
+      reasoning: true,
+    })
+    expect(
+      models.find((model) => model.id === 'claude-haiku-4-5-20251001'),
+    ).toMatchObject({
+      name: 'Claude Haiku 4.5',
+    })
+    for (const sdkModel of original) {
+      const registered = models.find((model) => model.id === sdkModel.id)
+      if (registered) {
+        const {
+          api: _api,
+          baseUrl: _baseUrl,
+          thinkingLevelMap: _adaptedThinkingLevelMap,
+          ...metadata
+        } = registered
+        const {
+          api: _sdkApi,
+          baseUrl: _sdkBaseUrl,
+          thinkingLevelMap: _sdkThinkingLevelMap,
+          ...sdkMetadata
+        } = sdkModel
+        expect(metadata).toEqual({ ...sdkMetadata, provider: 'anthropic' })
+      }
+    }
+    expect(ANTHROPIC_SDK_MODELS).toEqual(original)
+  })
+
+  test('excludes unproven adaptive converter branches and follows synthetic SDK additions/removals', () => {
+    const sdk = anthropicProvider().getModels()
+    const excludedIds = [
+      'claude-opus-4-6',
+      'claude-opus-4-7',
+      'claude-sonnet-4-6',
+    ]
+    const projected = buildCortexKitAnthropicModels(sdk)
+    expect(projected.map(({ id }) => id)).not.toEqual(
+      expect.arrayContaining(excludedIds),
+    )
+
+    const datedHaiku = sdk.find(({ id }) => id === 'claude-haiku-4-5-20251001')!
+    const withoutHaiku = sdk.filter(({ id }) => id !== datedHaiku.id)
+    expect(
+      buildCortexKitAnthropicModels(withoutHaiku).some(
+        ({ id }) => id === datedHaiku.id,
+      ),
+    ).toBe(false)
+    expect(
+      buildCortexKitAnthropicModels([...withoutHaiku, datedHaiku]).some(
+        ({ id }) => id === datedHaiku.id,
+      ),
+    ).toBe(true)
+    expect(
+      buildCortexKitAnthropicModels(
+        sdk.filter(({ id }) => id !== 'claude-sonnet-5'),
+      ).some(({ id }) => id === 'claude-sonnet-5'),
+    ).toBe(false)
+  })
+
+  test('adaptive SDK models are excluded when CortexKit captures token-budget thinking instead', async () => {
+    const { buildAnthropicRequest } = await import('../convert.ts')
+    const sdkProvider = anthropicProvider()
+    for (const id of [
+      'claude-opus-4-6',
+      'claude-opus-4-7',
+      'claude-sonnet-4-6',
+    ]) {
+      const sdkModel = sdkProvider.getModels().find((model) => model.id === id)!
+      let sdkPayload: Record<string, any> | undefined
+      const events = sdkProvider.streamSimple(
+        sdkModel,
+        { messages: [] } as any,
+        {
+          apiKey: 'no-network-capture',
+          reasoning: 'high',
+          onPayload: (payload: unknown) => {
+            sdkPayload = payload as Record<string, any>
+            throw new Error('capture complete')
+          },
+        } as any,
+      )
+      for await (const _event of events) {
+        /* consume the local capture */
+      }
+      const converted = await buildAnthropicRequest(
+        id,
+        { messages: [], systemPrompt: '', tools: [] } as any,
+        { reasoning: 'high' } as any,
+        { enabled: false, mode: 'explicit' },
+      )
+      expect(sdkPayload?.thinking?.type).toBe('adaptive')
+      expect(converted.body.thinking?.type).toBe('enabled')
+      expect(converted.body.output_config).toBeUndefined()
+    }
+  })
+
+  test('re-registration is deterministic and provider registration cannot mutate SDK models', async () => {
+    const before = structuredClone(ANTHROPIC_SDK_MODELS)
+    const { pi, providers } = mockPi()
+    await cortexKitPiAnthropicAuth(pi)
+    const first = structuredClone(providers.get('anthropic')?.models)
+    const firstModels = providers.get('anthropic')?.models ?? []
+    if (firstModels[0]) firstModels[0].name = 'host mutation'
+    await cortexKitPiAnthropicAuth(pi)
+    expect(providers.get('anthropic')?.models).toEqual(first)
+    expect(ANTHROPIC_SDK_MODELS).toEqual(before)
+  })
+
+  test('every projected model sends distinct valid thinking values for every offered level', async () => {
+    const { buildAnthropicRequest } = await import('../convert.ts')
+    const projected = buildCortexKitAnthropicModels(ANTHROPIC_SDK_MODELS)
+    const adaptiveIds = new Set([
+      'claude-fable-5',
+      'claude-fable-5-1',
+      'claude-mythos-5',
+      'claude-mythos-5-1',
+      'claude-opus-5',
+      'claude-opus-5-5',
+      'claude-sonnet-5',
+      'claude-sonnet-5-5',
+    ])
+    const effortRank: Record<string, number> = {
+      low: 1,
+      medium: 2,
+      high: 3,
+      xhigh: 4,
+      max: 5,
+    }
+    const budgetByLevel: Record<string, number> = {
+      minimal: 1_024,
+      low: 4_096,
+      medium: 10_240,
+      high: 20_480,
+      xhigh: 32_000,
+    }
+
+    for (const model of projected) {
+      const isAdaptive = adaptiveIds.has(model.id)
+      const levels = getSupportedThinkingLevels(
+        model as unknown as Parameters<typeof getSupportedThinkingLevels>[0],
+      )
+      if (isAdaptive) {
+        expect(levels).not.toContain('off')
+        expect(levels).not.toContain('minimal')
+      } else {
+        expect(levels).not.toContain('xhigh')
+        expect(levels).not.toContain('max')
+      }
+      const distinctValues: number[] = []
+      for (const level of levels) {
+        const { body } = await buildAnthropicRequest(
+          model.id,
+          { messages: [], systemPrompt: '', tools: [] } as any,
+          level === 'off' ? {} : ({ reasoning: level } as any),
+          { enabled: false, mode: 'explicit' },
+        )
+        if (isAdaptive) {
+          expect(body.thinking).toEqual({
+            type: 'adaptive',
+            display: 'summarized',
+          })
+          const effort = body.output_config?.effort
+          expect(effort).toBeDefined()
+          expect(['low', 'medium', 'high', 'xhigh', 'max']).toContain(effort!)
+          expect(effort).not.toBe('minimal')
+          distinctValues.push(effortRank[effort!]!)
+        } else if (level === 'off') {
+          expect(body.thinking).toBeUndefined()
+          expect(body.output_config).toBeUndefined()
+        } else {
+          const budget = (
+            body.thinking as { type: 'enabled'; budget_tokens: number }
+          ).budget_tokens
+          expect(body.thinking?.type).toBe('enabled')
+          expect(Number.isInteger(budget) && budget > 0).toBe(true)
+          expect(budget).toBe(budgetByLevel[level]!)
+          distinctValues.push(budget)
+        }
+      }
+      expect(new Set(distinctValues).size).toBe(distinctValues.length)
+      for (let index = 1; index < distinctValues.length; index++) {
+        expect(distinctValues[index]).toBeGreaterThan(
+          distinctValues[index - 1]!,
+        )
+      }
+    }
   })
 })
 

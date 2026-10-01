@@ -33,6 +33,12 @@ const ALLOWED_HOST_RUNTIME_IMPORTS: Record<string, readonly string[]> = {
     // Costs must use the host's pricing so its usage reporting agrees.
     'calculateCost',
   ],
+  '@oh-my-pi/pi-ai/providers/all': [
+    // The Anthropic catalog must be the host's own bundled models, so newly
+    // released models and pricing follow the host SDK. Oh My Pi's compat surface
+    // does not publish this entry; this build targets Pi hosts.
+    'getBuiltinModels',
+  ],
 }
 
 type AstNode = { type: string; [key: string]: unknown }

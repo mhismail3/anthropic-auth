@@ -8,6 +8,10 @@ This repo is a CortexKit-maintained Anthropic auth monorepo for OpenCode and Pi.
 
 - Add Claude Sonnet 5.5 (`claude-sonnet-5-5`) to Core, OpenCode, and Pi with its 1M context, 128K output, and official pricing. OpenCode and Pi request readable adaptive thinking. OpenCode maps explicit thinking opt-outs to Sonnet 5.5's `between_tools` mode, removes unsupported forced tool choice, and offers native `low` through `max` effort variants. Apply configured `error` or `drop_block` behavior to replayed Sonnet 5.5 and Opus 5.5 thinking when earlier messages, instructions, or tools have changed; the default account behavior stays unchanged. Pi exposes the model's supported `low`–`max` effort levels while refusing unsupported `minimal` and unavailable `off`.
 
+### Patch Changes
+
+- Derive Pi's CortexKit Anthropic model catalog from the pinned SDK, preserving SDK metadata while applying the custom API/base URL and narrowly masking unsupported thinking levels. Admit only models with proven converter request shapes; keep Mythos 5/5.1 as explicit additions until the SDK lists them. Pin the Pi SDK dev dependencies to 0.99.1, the first release whose catalog lists Sonnet 5.5. Load that catalog through `@earendil-works/pi-ai/providers/all`, because Pi's extension loader does not alias `/providers/anthropic`; a test requires every Pi import to be in the loader's alias table.
+
 ## 2.0.0
 
 ### Breaking Changes

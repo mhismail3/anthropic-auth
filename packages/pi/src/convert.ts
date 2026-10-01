@@ -713,7 +713,9 @@ export async function buildAnthropicRequest(
       throw new Error('Claude Sonnet 5.5 does not support minimal effort')
     }
     if (isFableOrMythos5 || isSonnet5 || isSonnet55 || isOpus5 || isOpus55) {
-      body.output_config = { effort: options.reasoning }
+      body.output_config = {
+        effort: options.reasoning === 'minimal' ? 'low' : options.reasoning,
+      }
     } else {
       const budgets: Record<string, number> = {
         minimal: 1024,
