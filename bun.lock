@@ -22,7 +22,7 @@
     },
     "packages/core": {
       "name": "@cortexkit/anthropic-auth-core",
-      "version": "1.23.0",
+      "version": "1.23.1-tron.10",
       "dependencies": {
         "@cortexkit/claustrum-client": "0.4.0",
         "xxhash-wasm": "^1.1.0",
@@ -37,13 +37,13 @@
     },
     "packages/opencode": {
       "name": "@cortexkit/opencode-anthropic-auth",
-      "version": "1.23.0",
+      "version": "1.23.1-tron.10",
       "bin": {
         "opencode-anthropic-auth": "dist/cli.js",
       },
       "dependencies": {
         "@clack/prompts": "^1.6.0",
-        "@cortexkit/anthropic-auth-core": "1.23.0",
+        "@cortexkit/anthropic-auth-core": "1.23.1-tron.10",
         "@opentui/core": "0.5.11",
         "@opentui/solid": "0.5.11",
         "jsonc-parser": "^3.3.1",
@@ -58,9 +58,9 @@
     },
     "packages/pi": {
       "name": "@cortexkit/pi-anthropic-auth",
-      "version": "1.23.0",
+      "version": "1.23.1-tron.10",
       "dependencies": {
-        "@cortexkit/anthropic-auth-core": "1.23.0",
+        "@cortexkit/anthropic-auth-core": "1.23.1-tron.10",
       },
       "peerDependencies": {
         "@earendil-works/pi-ai": ">=0.86.1",
