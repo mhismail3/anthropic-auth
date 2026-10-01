@@ -102,6 +102,32 @@ try {
     pathToFileURL(join(sdk, 'dist/core/extensions/loader.js')).href
   )
   const { normalizeContext } = await import('@earendil-works/pi-ai')
+  // Exercise the packed startup read, before any refresh hook can publish.
+  await writeFile(
+    join(profile, 'models-store.json'),
+    JSON.stringify({
+      anthropic: {
+        checkedAt: Date.now(),
+        lastModified: Number.MAX_SAFE_INTEGER,
+        models: [
+          {
+            id: 'claude-sonnet-6-5',
+            name: 'Claude Sonnet 6.5',
+            api: 'anthropic-messages',
+            provider: 'anthropic',
+            baseUrl: 'https://api.anthropic.com',
+            reasoning: true,
+            input: ['text', 'image'],
+            cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+            contextWindow: 1000000,
+            maxTokens: 128000,
+            thinkingLevelMap: { off: null, low: 'low', high: 'high' },
+            compat: { forceAdaptiveThinking: true },
+          },
+        ],
+      },
+    }),
+  )
   const runtime = createExtensionRuntime()
   const loaded = await loadExtensions([entry], temporary, undefined, runtime)
   assert.deepEqual(loaded.errors, [])
@@ -116,6 +142,10 @@ try {
   assert(
     configuration.refreshModels,
     'Packed extension has no catalog refresh hook',
+  )
+  assert(
+    configuration.models?.some((m) => m.id === 'claude-sonnet-6-5'),
+    'Packed extension omitted the stored model at registration before refresh',
   )
   const bundleModel = configuration.models?.find(
     (m) => m.id === 'claude-fable-5',
@@ -240,7 +270,8 @@ try {
       core: coreManifest.version,
       pi: piManifest.version,
       loader: 'passed',
-      storedOverlay: 'claude-sonnet-9 exposed offline',
+      storedOverlay:
+        'claude-sonnet-6-5 at registration; claude-sonnet-9 via offline refresh',
       wireCache: '1h explicit (no setup commands)',
       mixedTtlAccounting: 'passed',
       liveRequests: 0,

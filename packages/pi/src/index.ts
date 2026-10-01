@@ -1,3 +1,5 @@
+import { type FileHandle, open } from 'node:fs/promises'
+import { join } from 'node:path'
 import {
   authorize,
   type ClaustrumScopedClient,
@@ -26,7 +28,30 @@ import {
   deriveContextEntries,
 } from './effort-history.ts'
 import { getCortexKitAnthropicModels } from './model-catalog.ts'
-import { getPiAccountStoragePath } from './paths.ts'
+import { getPiAccountStoragePath, getPiConfigDir } from './paths.ts'
+
+const MAX_MODELS_STORE_BYTES = 4 * 1024 * 1024
+
+async function readStoredAnthropicModels(): Promise<unknown> {
+  let file: FileHandle | undefined
+  try {
+    file = await open(join(getPiConfigDir(), 'models-store.json'), 'r')
+    const info = await file.stat()
+    if (info.size > MAX_MODELS_STORE_BYTES) return undefined
+    const buffer = Buffer.alloc(MAX_MODELS_STORE_BYTES + 1)
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0)
+    if (bytesRead > MAX_MODELS_STORE_BYTES) return undefined
+    const parsed: unknown = JSON.parse(buffer.toString('utf8', 0, bytesRead))
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      return undefined
+    return (parsed as Record<string, unknown>).anthropic
+  } catch {
+    return undefined
+  } finally {
+    await file?.close().catch(() => undefined)
+  }
+}
+
 import {
   closePiScopedRuntime,
   getPiScopedRuntime,
@@ -101,6 +126,12 @@ export default async function cortexKitPiAnthropicAuth(
       connect: options.connectScoped,
     }),
   )
+  // Pi owns FileModelsStore at { [providerId]: { models, checkedAt,
+  // lastModified, etag } }. getPiConfigDir mirrors Pi's getAgentDir() location:
+  // PI_CODING_AGENT_DIR first, otherwise ~/.pi/agent. Read only; never write.
+  // This keeps synchronous provider rebuilds from losing persisted models.
+  const storedAnthropic = await readStoredAnthropicModels()
+  const initialModels = getCortexKitAnthropicModels(storedAnthropic)
   const effortHistoryBySession = new Map<
     string,
     MidConversationEffortTransition[]
@@ -143,9 +174,7 @@ export default async function cortexKitPiAnthropicAuth(
     name: 'Anthropic (CortexKit)',
     baseUrl: 'https://api.anthropic.com',
     api: 'cortexkit-anthropic-messages',
-    models: getCortexKitAnthropicModels() as unknown as NonNullable<
-      ProviderConfig['models']
-    >,
+    models: initialModels as unknown as NonNullable<ProviderConfig['models']>,
     refreshModels: async (context: RefreshModelsContext) =>
       getCortexKitAnthropicModels(context.stored) as unknown as NonNullable<
         ProviderConfig['models']
@@ -183,7 +212,7 @@ export default async function cortexKitPiAnthropicAuth(
       await requirePiEnrollment()
       return true
     }
-    let nativeModels = getCortexKitAnthropicModels()
+    let nativeModels = initialModels
     const provider: Provider = {
       id: 'anthropic',
       name: 'Anthropic (Claustrum)',
