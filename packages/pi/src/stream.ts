@@ -670,6 +670,11 @@ async function sendAnthropicRequest(options: {
         ? 'account-default'
         : getThinkingPrefixMismatchBehavior(storage),
     },
+    options.model.compat
+      ? (options.model as unknown as Parameters<
+          typeof buildAnthropicRequest
+        >[7])
+      : undefined,
   )
   options.onResolvedToolNames?.(toolNames)
   const fastMode = body.speed === 'fast'

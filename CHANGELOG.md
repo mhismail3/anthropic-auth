@@ -18,6 +18,8 @@ This repo is a CortexKit-maintained Anthropic auth monorepo for OpenCode and Pi.
 - Stop advertising SDK automatic-warming lifetimes for the independently controlled CortexKit cache policy; explicit CortexKit cache keeping remains available.
 - Make configuration updates transactional across sessions/processes so cache enablement/mode and unrelated settings cannot undo each other. Report committed cache settings with accurate Pi scope and retention semantics.
 - Add multi-turn serialized-request, accounting, command failure and configuration concurrency regressions.
+- Project the Pi Anthropic catalog from bundled models plus the persisted Pi provider overlay, with bounded validation and metadata-gated adaptive-thinking support for newly released models.
+- Refresh legacy and Claustrum providers from the stored snapshot without duplicate fetching or persistence, and derive adaptive request thinking from the dispatched model metadata.
 
 ## 2.0.0
 

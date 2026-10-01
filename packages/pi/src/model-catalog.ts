@@ -25,28 +25,100 @@ export type CortexKitAnthropicModel = Omit<AnthropicSdkModel, 'api'> & {
   baseUrl: string
 }
 
-type ConverterBranch = 'adaptive-summary' | 'generic-token-budget'
+export type ConverterBranch = 'adaptive-summary' | 'generic-token-budget'
 
-const CONVERTER_ALLOWLIST: Readonly<Record<string, ConverterBranch>> = {
-  [CLAUDE_FABLE_5_MODEL_ID]: 'adaptive-summary',
-  [CLAUDE_FABLE_5_1_MODEL_ID]: 'adaptive-summary',
-  'claude-opus-5-5': 'adaptive-summary',
-  'claude-opus-5': 'adaptive-summary',
-  'claude-opus-4-8': 'generic-token-budget',
-  'claude-opus-4-5': 'generic-token-budget',
-  'claude-sonnet-4-5': 'generic-token-budget',
-  'claude-sonnet-5': 'adaptive-summary',
-  'claude-sonnet-5-5': 'adaptive-summary',
-  'claude-mythos-5': 'adaptive-summary',
-  'claude-mythos-5-1': 'adaptive-summary',
+const LEGACY_BUDGET_ALLOWLIST = new Set([
+  'claude-opus-4-8',
+  'claude-opus-4-5',
+  'claude-sonnet-4-5',
   // CAT-1 captures: these legacy-thinking models send the same enabled budget
   // shape through CortexKit and the pinned SDK's anthropic-messages provider.
-  'claude-haiku-4-5': 'generic-token-budget',
-  'claude-haiku-4-5-20251001': 'generic-token-budget',
-  'claude-opus-4-5-20251101': 'generic-token-budget',
-  'claude-sonnet-4-5-20250929': 'generic-token-budget',
-  // Excluded: Opus 4.6/4.7 and Sonnet 4.6 are SDK adaptive-thinking models;
-  // CortexKit's generic converter emits budget_tokens instead of adaptive effort.
+  'claude-haiku-4-5',
+  'claude-haiku-4-5-20251001',
+  'claude-opus-4-5-20251101',
+  'claude-sonnet-4-5-20250929',
+])
+
+const EXCLUDED_ADAPTIVE_IDS = new Set([
+  'claude-opus-4-6',
+  'claude-opus-4-7',
+  'claude-sonnet-4-6',
+  // Excluded: these IDs remain withheld until captured with this converter.
+])
+
+export function getConverterBranch(
+  model: Pick<
+    AnthropicSdkModel,
+    'id' | 'api' | 'baseUrl' | 'reasoning' | 'compat'
+  >,
+): ConverterBranch | undefined {
+  if (EXCLUDED_ADAPTIVE_IDS.has(model.id)) return undefined
+  if (LEGACY_BUDGET_ALLOWLIST.has(model.id)) return 'generic-token-budget'
+  if (
+    model.api === 'anthropic-messages' &&
+    model.baseUrl === 'https://api.anthropic.com' &&
+    model.reasoning === true &&
+    model.compat?.forceAdaptiveThinking === true
+  )
+    return 'adaptive-summary'
+  return undefined
+}
+
+function isValidStoredModel(value: unknown): value is AnthropicSdkModel {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const model = value as Record<string, unknown>
+  return (
+    typeof model.id === 'string' &&
+    model.id.length > 0 &&
+    model.id.length <= 128 &&
+    typeof model.name === 'string' &&
+    model.name.length <= 256 &&
+    model.api === 'anthropic-messages' &&
+    model.baseUrl === 'https://api.anthropic.com' &&
+    typeof model.reasoning === 'boolean' &&
+    Array.isArray(model.input) &&
+    model.input.length <= 8 &&
+    model.input.every((item) => item === 'text' || item === 'image') &&
+    !!model.cost &&
+    typeof model.cost === 'object' &&
+    ['input', 'output', 'cacheRead', 'cacheWrite'].every((key) => {
+      const rate = (model.cost as Record<string, unknown>)[key]
+      return typeof rate === 'number' && Number.isFinite(rate) && rate >= 0
+    }) &&
+    Number.isInteger(model.contextWindow) &&
+    Number(model.contextWindow) > 0 &&
+    Number.isInteger(model.maxTokens) &&
+    Number(model.maxTokens) > 0 &&
+    (!model.thinkingLevelMap ||
+      (typeof model.thinkingLevelMap === 'object' &&
+        !Array.isArray(model.thinkingLevelMap))) &&
+    (!model.compat ||
+      (typeof model.compat === 'object' && !Array.isArray(model.compat)))
+  )
+}
+
+/** Merge the persisted provider snapshot. The generated-at bundle timestamp is
+ * not exposed by the extension loader's pi-ai aliases, so stored overlay entries
+ * are considered authoritative by ID; new remote models appear next refresh. */
+export function mergeAnthropicCatalog(
+  sdkModels: readonly AnthropicSdkModel[],
+  stored: unknown,
+): AnthropicSdkModel[] {
+  const byId = new Map(sdkModels.map((model) => [model.id, cloneModel(model)]))
+  try {
+    const entry = stored as
+      | { models?: unknown; lastModified?: unknown }
+      | undefined
+    if (!entry || !Array.isArray(entry.models) || entry.models.length > 1000)
+      return [...byId.values()]
+    for (const candidate of entry.models) {
+      if (!isValidStoredModel(candidate)) continue
+      byId.set(candidate.id, cloneModel(candidate))
+    }
+  } catch {
+    return [...sdkModels].map(cloneModel)
+  }
+  return [...byId.values()]
 }
 
 function cloneModel<T extends AnthropicSdkModel>(model: T): T {
@@ -84,12 +156,17 @@ function adaptModel(
 /** Pure catalog projection; never mutates SDK-owned model objects. */
 export function buildCortexKitAnthropicModels(
   sdkModels: readonly AnthropicSdkModel[],
+  stored?: unknown,
 ): CortexKitAnthropicModel[] {
-  const byId = new Map(sdkModels.map((model) => [model.id, model]))
+  const catalog =
+    stored === undefined
+      ? sdkModels.map(cloneModel)
+      : mergeAnthropicCatalog(sdkModels, stored)
+  const byId = new Map(catalog.map((model) => [model.id, model]))
   const models: CortexKitAnthropicModel[] = []
 
-  for (const sdkModel of sdkModels) {
-    const branch = CONVERTER_ALLOWLIST[sdkModel.id]
+  for (const sdkModel of catalog) {
+    const branch = getConverterBranch(sdkModel)
     if (!branch) continue
     models.push(adaptModel(sdkModel, branch))
   }
@@ -137,6 +214,6 @@ export function buildCortexKitAnthropicModels(
   return models
 }
 
-export function getCortexKitAnthropicModels() {
-  return buildCortexKitAnthropicModels(ANTHROPIC_SDK_MODELS)
+export function getCortexKitAnthropicModels(stored?: unknown) {
+  return buildCortexKitAnthropicModels(ANTHROPIC_SDK_MODELS, stored)
 }

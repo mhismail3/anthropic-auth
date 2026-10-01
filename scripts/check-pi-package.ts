@@ -108,6 +108,35 @@ try {
     configuration?.streamSimple,
     'Packed extension did not register the Anthropic stream',
   )
+  assert(
+    configuration.refreshModels,
+    'Packed extension has no catalog refresh hook',
+  )
+  const bundleModel = configuration.models?.find(
+    (m) => m.id === 'claude-fable-5',
+  )
+  assert(bundleModel)
+  const futureModel = {
+    ...bundleModel,
+    id: 'claude-sonnet-9',
+    name: 'Claude Sonnet 9',
+    api: 'anthropic-messages',
+    compat: {
+      // Pi types compat only on its chat-model config variant.
+      ...(bundleModel as { compat?: Record<string, unknown> }).compat,
+      forceAdaptiveThinking: true,
+    },
+  }
+  const projected = await configuration.refreshModels({
+    stored: { models: [futureModel], checkedAt: Date.now() },
+    signal: new AbortController().signal,
+    allowNetwork: false,
+    publish: async () => true,
+  } as never)
+  assert(
+    projected.some((m) => m.id === 'claude-sonnet-9'),
+    'Packed catalog omitted the stored future model',
+  )
   const model = configuration.models?.find((m) => m.id === 'claude-opus-5-5')
   assert(model)
   // Pi types promptCache only on its chat-model config variant.
@@ -187,6 +216,7 @@ try {
       core: coreManifest.version,
       pi: piManifest.version,
       loader: 'passed',
+      storedOverlay: 'claude-sonnet-9 exposed offline',
       wireCache: '1h explicit (no setup commands)',
       mixedTtlAccounting: 'passed',
       liveRequests: 0,

@@ -11,6 +11,7 @@ import type {
   OAuthCredentials,
   OAuthLoginCallbacks,
   Provider,
+  RefreshModelsContext,
   SimpleStreamOptions,
 } from '@earendil-works/pi-ai'
 import type {
@@ -145,6 +146,10 @@ export default async function cortexKitPiAnthropicAuth(
     models: getCortexKitAnthropicModels() as unknown as NonNullable<
       ProviderConfig['models']
     >,
+    refreshModels: async (context: RefreshModelsContext) =>
+      getCortexKitAnthropicModels(context.stored) as unknown as NonNullable<
+        ProviderConfig['models']
+      >,
     oauth: {
       name: 'Anthropic Claude Pro/Max (CortexKit)',
       login: loginAnthropic,
@@ -178,6 +183,7 @@ export default async function cortexKitPiAnthropicAuth(
       await requirePiEnrollment()
       return true
     }
+    let nativeModels = getCortexKitAnthropicModels()
     const provider: Provider = {
       id: 'anthropic',
       name: 'Anthropic (Claustrum)',
@@ -199,12 +205,23 @@ export default async function cortexKitPiAnthropicAuth(
         },
       },
       getModels: () =>
-        structuredClone(configuration.models ?? []).map((model) => ({
+        structuredClone(nativeModels).map((model) => ({
           ...model,
           provider: 'anthropic',
           api: model.api ?? 'cortexkit-anthropic-messages',
           baseUrl: model.baseUrl ?? 'https://api.anthropic.com',
         })) as unknown as ReturnType<Provider['getModels']>,
+      // The native Claustrum provider replaces Pi's built-in provider; restore
+      // only Pi's stored snapshot and never persist it or run another fetcher.
+      refreshModels: async (context) => {
+        const refreshed = getCortexKitAnthropicModels(context.stored)
+        if (context.signal.aborted) return
+        await context.publish({
+          update: () => {
+            nativeModels = refreshed
+          },
+        })
+      },
       // Preserve the legacy provider's simplified option surface for raw calls.
       stream: (model, context, options) =>
         streamSimple(model, context, options as SimpleStreamOptions),

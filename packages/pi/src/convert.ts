@@ -628,6 +628,12 @@ export async function buildAnthropicRequest(
     effortTransitions?: readonly MidConversationEffortTransition[]
     thinkingPrefixMismatchBehavior?: ThinkingPrefixMismatchBehavior
   } = {},
+  modelMetadata?: {
+    api?: string
+    baseUrl?: string
+    reasoning?: boolean
+    compat?: Record<string, unknown>
+  },
 ): Promise<{
   body: AnthropicRequestBody
   bodyText: string
@@ -718,11 +724,20 @@ export async function buildAnthropicRequest(
     body.speed = 'fast'
   }
 
-  const isFableOrMythos5 = isClaudeFableOrMythos5Model(modelId)
-  const isSonnet5 = isClaudeSonnet5Model(modelId)
-  const isSonnet55 = isClaudeSonnet55Model(modelId)
-  const isOpus5 = isClaudeOpus5Model(modelId)
-  const isOpus55 = isClaudeOpus55Model(modelId)
+  const metadataAdaptive = modelMetadata
+    ? modelMetadata.api === 'cortexkit-anthropic-messages' &&
+      modelMetadata.baseUrl === 'https://api.anthropic.com' &&
+      modelMetadata.reasoning === true &&
+      modelMetadata.compat?.forceAdaptiveThinking === true
+    : undefined
+  const isFableOrMythos5 =
+    metadataAdaptive ?? isClaudeFableOrMythos5Model(modelId)
+  const isSonnet5 = modelMetadata ? false : isClaudeSonnet5Model(modelId)
+  const isSonnet55 = modelMetadata ? false : isClaudeSonnet55Model(modelId)
+  const isOpus5 = modelMetadata ? false : isClaudeOpus5Model(modelId)
+  const isOpus55 = modelMetadata ? false : isClaudeOpus55Model(modelId)
+  // Catalog metadata selects the adaptive-summary branch for any admitted
+  // forced-adaptive model; without it, known model IDs select their family.
   // Request summaries so the host can display adaptive reasoning.
   // Pi's typed options cannot express the disabled-thinking setting;
   // OpenCode handles it by transforming the raw request body. Separate model
