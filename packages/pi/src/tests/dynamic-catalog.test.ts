@@ -8,6 +8,7 @@ Concrete failure modes covered here:
 */
 import { describe, expect, test } from 'bun:test'
 import { normalizeContext } from '@earendil-works/pi-ai'
+import { getBuiltinModelDataGeneratedAt } from '@earendil-works/pi-ai/providers/all'
 import { buildAnthropicRequest } from '../convert.ts'
 import {
   ANTHROPIC_SDK_MODELS,
@@ -37,15 +38,20 @@ describe('dynamic Anthropic catalog projection', () => {
       baseUrl: 'https://proxy.invalid',
     }
     const excluded = dynamicModel('claude-opus-4-6')
-    const storedModels = [future, unproven, noMetadata, excluded]
+    const datedExcluded = dynamicModel('claude-opus-4-7-20260101')
+    const storedModels = [future, unproven, noMetadata, excluded, datedExcluded]
     const before = JSON.stringify(storedModels)
     const projected = buildCortexKitAnthropicModels(ANTHROPIC_SDK_MODELS, {
+      lastModified: Number.MAX_SAFE_INTEGER,
       models: storedModels,
     })
     expect(projected.map((model) => model.id)).toContain('claude-sonnet-9')
     expect(projected.map((model) => model.id)).not.toContain('claude-sonnet-10')
     expect(projected.map((model) => model.id)).not.toContain('claude-future-1')
     expect(projected.map((model) => model.id)).not.toContain('claude-opus-4-6')
+    expect(projected.map((model) => model.id)).not.toContain(
+      'claude-opus-4-7-20260101',
+    )
     expect(JSON.stringify(storedModels)).toBe(before)
 
     const requestModel = projected.find((model) => model.id === future.id)!
@@ -73,7 +79,10 @@ describe('dynamic Anthropic catalog projection', () => {
       ...dynamicModel('claude-sonnet-5'),
       name: 'Overlay name',
     }
-    const catalog = mergeAnthropicCatalog(source, { models: [replaced] })
+    const catalog = mergeAnthropicCatalog(source, {
+      lastModified: Number.MAX_SAFE_INTEGER,
+      models: [replaced],
+    })
     expect(catalog.find((model) => model.id === replaced.id)?.name).toBe(
       'Overlay name',
     )
@@ -81,8 +90,31 @@ describe('dynamic Anthropic catalog projection', () => {
       'Overlay name',
     )
     expect(
-      buildCortexKitAnthropicModels(source, { models: [{ id: 'evil' }] })
-        .length,
-    ).toBeGreaterThan(0)
+      buildCortexKitAnthropicModels(source, { models: [{ id: 'evil' }] }),
+    ).toEqual(buildCortexKitAnthropicModels(source))
+  })
+
+  test('ignores stale snapshots, non-array stores, and oversized stores', () => {
+    const source = structuredClone(ANTHROPIC_SDK_MODELS)
+    const bundled = source.find((model) => model.id === 'claude-opus-4-8')!
+    const replaced = { ...dynamicModel(bundled.id), name: 'stale name' }
+    const stale = mergeAnthropicCatalog(source, {
+      lastModified: getBuiltinModelDataGeneratedAt(),
+      models: [replaced],
+    })
+    expect(stale.find((model) => model.id === bundled.id)?.name).toBe(
+      bundled.name,
+    )
+    expect(mergeAnthropicCatalog(source, { models: 'malformed' })).toEqual([
+      ...source,
+    ])
+    expect(
+      mergeAnthropicCatalog(source, {
+        lastModified: Number.MAX_SAFE_INTEGER,
+        models: Array.from({ length: 1001 }, () =>
+          dynamicModel('claude-sonnet-99'),
+        ),
+      }),
+    ).toEqual([...source])
   })
 })

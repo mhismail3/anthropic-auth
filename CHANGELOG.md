@@ -20,6 +20,7 @@ This repo is a CortexKit-maintained Anthropic auth monorepo for OpenCode and Pi.
 - Add multi-turn serialized-request, accounting, command failure and configuration concurrency regressions.
 - Project the Pi Anthropic catalog from bundled models plus the persisted Pi provider overlay, with bounded validation and metadata-gated adaptive-thinking support for newly released models.
 - Refresh legacy and Claustrum providers from the stored snapshot without duplicate fetching or persistence, and derive adaptive request thinking from the dispatched model metadata.
+- Match Pi's generated-at freshness rule when applying overlays, preserve Opus 4.8's captured token-budget request shape, and exclude dated variants of unproven model families.
 
 ## 2.0.0
 

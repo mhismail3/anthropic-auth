@@ -38,6 +38,8 @@ const ALLOWED_HOST_RUNTIME_IMPORTS: Record<string, readonly string[]> = {
     // released models and pricing follow the host SDK. Oh My Pi's compat surface
     // does not publish this entry; this build targets Pi hosts.
     'getBuiltinModels',
+    // Overlay freshness compares against the host bundle's own generated-at time.
+    'getBuiltinModelDataGeneratedAt',
   ],
 }
 

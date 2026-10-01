@@ -73,7 +73,12 @@ try {
   assert.equal(piManifest.dependencies[coreManifest.name], coreManifest.version)
   // Only external runtime dependencies are shared with the checkout. The code
   // under test must resolve to the extracted core, and Pi peers use loader aliases.
-  for (const name of Object.keys(coreManifest.dependencies)) {
+  for (const name of [
+    ...Object.keys(coreManifest.dependencies),
+    '@earendil-works/pi-ai',
+    '@earendil-works/pi-coding-agent',
+    '@earendil-works/pi-tui',
+  ]) {
     const destination = join(modules, name)
     await mkdir(dirname(destination), { recursive: true })
     await symlink(join(root, 'node_modules', name), destination, 'dir')
@@ -128,15 +133,34 @@ try {
     },
   }
   const projected = await configuration.refreshModels({
-    stored: { models: [futureModel], checkedAt: Date.now() },
+    stored: {
+      models: [futureModel],
+      checkedAt: Date.now(),
+      lastModified: Number.MAX_SAFE_INTEGER,
+    },
     signal: new AbortController().signal,
     allowNetwork: false,
     publish: async () => true,
   } as never)
-  assert(
-    projected.some((m) => m.id === 'claude-sonnet-9'),
-    'Packed catalog omitted the stored future model',
+  const packedFuture = projected.find((m) => m.id === 'claude-sonnet-9')
+  assert(packedFuture, 'Packed catalog omitted the stored future model')
+  const converterUrl = pathToFileURL(join(pi, 'dist/convert.js')).href
+  const packedRequest = JSON.parse(
+    execFileSync(
+      '/opt/homebrew/bin/bun',
+      [
+        '-e',
+        `import { buildAnthropicRequest } from ${JSON.stringify(converterUrl)}; import { normalizeContext } from '@earendil-works/pi-ai'; const result = await buildAnthropicRequest('claude-sonnet-9', normalizeContext({ messages: [], systemPrompt: '', tools: [] }), { reasoning: 'low' }, { enabled: false, mode: 'explicit' }, false, undefined, {}, ${JSON.stringify(packedFuture)}); console.log(JSON.stringify(result.body))`,
+      ],
+      { cwd: root, encoding: 'utf8' },
+    ),
   )
+  assert.deepEqual(packedRequest.thinking, {
+    type: 'adaptive',
+    display: 'summarized',
+  })
+  assert.deepEqual(packedRequest.output_config, { effort: 'low' })
+  assert(!JSON.stringify(packedRequest).includes('budget_tokens'))
   const model = configuration.models?.find((m) => m.id === 'claude-opus-5-5')
   assert(model)
   // Pi types promptCache only on its chat-model config variant.

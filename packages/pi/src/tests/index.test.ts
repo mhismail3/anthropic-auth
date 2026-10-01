@@ -11,6 +11,7 @@ import cortexKitPiAnthropicAuth from '../index'
 import {
   ANTHROPIC_SDK_MODELS,
   buildCortexKitAnthropicModels,
+  getConverterBranch,
 } from '../model-catalog'
 
 let tempDir: string | undefined
@@ -372,16 +373,11 @@ describe('SDK-backed Anthropic model catalog', () => {
   test('every projected model sends distinct valid thinking values for every offered level', async () => {
     const { buildAnthropicRequest } = await import('../convert.ts')
     const projected = buildCortexKitAnthropicModels(ANTHROPIC_SDK_MODELS)
-    const adaptiveIds = new Set([
-      'claude-fable-5',
-      'claude-fable-5-1',
-      'claude-mythos-5',
-      'claude-mythos-5-1',
-      'claude-opus-5',
-      'claude-opus-5-5',
-      'claude-sonnet-5',
-      'claude-sonnet-5-5',
-    ])
+    const adaptiveIds = new Set(
+      projected
+        .filter((model) => getConverterBranch(model) === 'adaptive-summary')
+        .map((model) => model.id),
+    )
     const effortRank: Record<string, number> = {
       low: 1,
       medium: 2,
@@ -416,6 +412,10 @@ describe('SDK-backed Anthropic model catalog', () => {
           { messages: [], systemPrompt: '', tools: [] } as any,
           level === 'off' ? {} : ({ reasoning: level } as any),
           { enabled: false, mode: 'explicit' },
+          false,
+          undefined,
+          {},
+          model as any,
         )
         if (isAdaptive) {
           expect(body.thinking).toEqual({

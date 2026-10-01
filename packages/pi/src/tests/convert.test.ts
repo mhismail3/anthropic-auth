@@ -710,6 +710,25 @@ describe('buildAnthropicRequest — Fable/Mythos thinking', () => {
 })
 
 describe('buildAnthropicRequest — Sonnet 5 thinking', () => {
+  test('keeps Opus 4.8 on token budgets even when metadata opts into adaptive thinking', async () => {
+    const { body } = await buildAnthropicRequest(
+      'claude-opus-4-8',
+      { messages: [userMsg('hello')], systemPrompt: 'test', tools: [] } as any,
+      { reasoning: 'high' } as any,
+      defaultCache,
+      false,
+      undefined,
+      {},
+      {
+        api: 'cortexkit-anthropic-messages',
+        baseUrl: 'https://api.anthropic.com',
+        reasoning: true,
+        compat: { forceAdaptiveThinking: true },
+      },
+    )
+    expect(body.output_config).toBeUndefined()
+    expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 20_480 })
+  })
   test('requests summarized adaptive thinking for Sonnet 5 without reasoning', async () => {
     const { body } = await buildAnthropicRequest(
       'claude-sonnet-5',

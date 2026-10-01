@@ -35,6 +35,7 @@ import type {
   Tool,
   ToolResultMessage,
 } from '@earendil-works/pi-ai'
+import { getConverterBranch } from './model-catalog.ts'
 import {
   collapseSystemMessages,
   getCurrentSystemPrompt,
@@ -725,10 +726,8 @@ export async function buildAnthropicRequest(
   }
 
   const metadataAdaptive = modelMetadata
-    ? modelMetadata.api === 'cortexkit-anthropic-messages' &&
-      modelMetadata.baseUrl === 'https://api.anthropic.com' &&
-      modelMetadata.reasoning === true &&
-      modelMetadata.compat?.forceAdaptiveThinking === true
+    ? getConverterBranch({ ...modelMetadata, id: modelId }) ===
+      'adaptive-summary'
     : undefined
   const isFableOrMythos5 =
     metadataAdaptive ?? isClaudeFableOrMythos5Model(modelId)

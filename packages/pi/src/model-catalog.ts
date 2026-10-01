@@ -11,7 +11,10 @@ import {
 import type { Model } from '@earendil-works/pi-ai'
 // Pi's extension loader aliases only the pi-ai root, /compat, /oauth and
 // /providers/all; other subpaths do not resolve inside an installed extension.
-import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
+import {
+  getBuiltinModelDataGeneratedAt,
+  getBuiltinModels,
+} from '@earendil-works/pi-ai/providers/all'
 
 export type AnthropicSdkModel = Model<'anthropic-messages'>
 
@@ -39,23 +42,31 @@ const LEGACY_BUDGET_ALLOWLIST = new Set([
   'claude-sonnet-4-5-20250929',
 ])
 
-const EXCLUDED_ADAPTIVE_IDS = new Set([
+const EXCLUDED_ADAPTIVE_IDS = [
   'claude-opus-4-6',
   'claude-opus-4-7',
   'claude-sonnet-4-6',
-  // Excluded: these IDs remain withheld until captured with this converter.
-])
+] as const
+// Excluded: these IDs remain withheld until captured with this converter.
 
-export function getConverterBranch(
-  model: Pick<
-    AnthropicSdkModel,
-    'id' | 'api' | 'baseUrl' | 'reasoning' | 'compat'
-  >,
-): ConverterBranch | undefined {
-  if (EXCLUDED_ADAPTIVE_IDS.has(model.id)) return undefined
+function isExcludedAdaptiveId(id: string): boolean {
+  return EXCLUDED_ADAPTIVE_IDS.some(
+    (excluded) => id === excluded || id.startsWith(`${excluded}-`),
+  )
+}
+
+export function getConverterBranch(model: {
+  id: string
+  api?: string
+  baseUrl?: string
+  reasoning?: boolean
+  compat?: AnthropicSdkModel['compat']
+}): ConverterBranch | undefined {
+  if (isExcludedAdaptiveId(model.id)) return undefined
   if (LEGACY_BUDGET_ALLOWLIST.has(model.id)) return 'generic-token-budget'
   if (
-    model.api === 'anthropic-messages' &&
+    (model.api === 'anthropic-messages' ||
+      model.api === 'cortexkit-anthropic-messages') &&
     model.baseUrl === 'https://api.anthropic.com' &&
     model.reasoning === true &&
     model.compat?.forceAdaptiveThinking === true
@@ -97,9 +108,7 @@ function isValidStoredModel(value: unknown): value is AnthropicSdkModel {
   )
 }
 
-/** Merge the persisted provider snapshot. The generated-at bundle timestamp is
- * not exposed by the extension loader's pi-ai aliases, so stored overlay entries
- * are considered authoritative by ID; new remote models appear next refresh. */
+/** Merge only a fresh persisted provider snapshot, matching Pi's remote catalog. */
 export function mergeAnthropicCatalog(
   sdkModels: readonly AnthropicSdkModel[],
   stored: unknown,
@@ -109,7 +118,15 @@ export function mergeAnthropicCatalog(
     const entry = stored as
       | { models?: unknown; lastModified?: unknown }
       | undefined
-    if (!entry || !Array.isArray(entry.models) || entry.models.length > 1000)
+    const generatedAt = getBuiltinModelDataGeneratedAt()
+    if (
+      !entry ||
+      !Array.isArray(entry.models) ||
+      entry.models.length > 1000 ||
+      (generatedAt !== undefined &&
+        (typeof entry.lastModified !== 'number' ||
+          entry.lastModified <= generatedAt))
+    )
       return [...byId.values()]
     for (const candidate of entry.models) {
       if (!isValidStoredModel(candidate)) continue
