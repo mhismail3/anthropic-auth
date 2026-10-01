@@ -39,3 +39,6 @@ temp/
 *.flow
 *.flow.log
 captures/*.txt
+
+# Locally packed Tron build archives (see packages/pi/README.md)
+/artifacts/

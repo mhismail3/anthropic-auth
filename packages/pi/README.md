@@ -42,6 +42,31 @@ To try it for one run without changing Pi settings:
 pi -e npm:@cortexkit/pi-anthropic-auth
 ```
 
+### Install a local Tron build
+
+`-tron.N` versions come from the `mhismail3/anthropic-auth` fork and are not published to npm. Build them on the machine that runs the host (Bun and Node 22.18+):
+
+```bash
+git clone https://github.com/mhismail3/anthropic-auth.git ~/Workspace/anthropic-auth
+cd ~/Workspace/anthropic-auth
+bun install --frozen-lockfile
+bun run build
+bun run test
+mkdir -p artifacts
+(cd packages/core && bun pm pack --destination ../../artifacts)
+(cd packages/pi && bun pm pack --destination ../../artifacts)
+bun run check:pi-package artifacts/cortexkit-anthropic-auth-core-*.tgz artifacts/cortexkit-pi-anthropic-auth-*.tgz
+```
+
+Then list both archives, with absolute paths, in the host's global `packages` setting (for Tron, `~/.tron/agent/settings.json`), replacing any other `@cortexkit/pi-anthropic-auth` or `@cortexkit/anthropic-auth-core` entry. The Pi package needs the core archive of the same version:
+
+```json
+"npm:@cortexkit/pi-anthropic-auth@file:/ABSOLUTE/PATH/artifacts/cortexkit-pi-anthropic-auth-<version>.tgz",
+"npm:@cortexkit/anthropic-auth-core@file:/ABSOLUTE/PATH/artifacts/cortexkit-anthropic-auth-core-<version>.tgz"
+```
+
+The host keeps loading from those paths, so do not delete the archives while they are listed. This build loads its model catalog from the host's own Pi SDK and therefore targets Pi hosts, not Oh My Pi.
+
 Restart Pi after installing, then authenticate through Pi's normal login flow:
 
 ```text
@@ -116,7 +141,7 @@ The existing rotating CortexKit log has a `pi-cache` channel:
 
 No prompt, tool result, credential, request body or signed thinking is logged by these events. Full request dumping is neither required nor enabled. The logger's existing location/rotation controls apply. Byte size is diagnostic: caching still transmits the history, and provider size errors must continue through the host's existing compact-and-retry recovery, not silent image deletion.
 
-Focused regressions: `src/tests/cache.test.ts`, `convert.test.ts`, `commands.test.ts` and the core's `config-transactions.test.ts`. The cache matrix must fail on an uncorrected converter; a green first-turn-only test does not establish coverage. Run the package's normal test/typecheck/build commands, then run `bun run check:pi-package <core.tgz> <pi.tgz>` (Node 22.18+). This validates the packed extension through the real SDK extension loader in a temporary, credential-free profile with network access blocked. Local `1.23.1-tron.7` requires the accompanying `@cortexkit/anthropic-auth-core@1.23.1-tron.1` artifact; neither version is published. Adopt both through the host's package-management owner, not edits to installed JavaScript. Package installation uses the host's package-management owner; no Gateway binary rebuild or restart is required for global provider-resource reconciliation. Already-open project runtimes may retain their loaded extension until their normal resource reload.
+Focused regressions: `src/tests/cache.test.ts`, `convert.test.ts`, `commands.test.ts` and the core's `config-transactions.test.ts`. The cache matrix must fail on an uncorrected converter; a green first-turn-only test does not establish coverage. Run the package's normal test/typecheck/build commands, then run `bun run check:pi-package <core.tgz> <pi.tgz>` (Node 22.18+). This validates the packed extension through the real SDK extension loader in a temporary, credential-free profile with network access blocked. `-tron.N` builds are unpublished; install them as described in [Install a local Tron build](#install-a-local-tron-build). Package installation uses the host's package-management owner; no Gateway binary rebuild or restart is required for global provider-resource reconciliation. Already-open project runtimes may retain their loaded extension until their normal resource reload.
 
 Offline success does not prove server caching. After adoption, an explicitly authorized small fresh-session canary should hold model, effort, tools and instructions fixed, cover text → tool result → notification → tool result, and verify returned cache reads after a 6–7 minute gap. Bound calls/output and stop on errors; no retry loop or cache prewarming to force a pass. Validate semantic output and time-to-first-token as well as cache usage. Account for legitimate invalidation after model/tool/prompt changes, compaction or TTL expiry; do not infer subscription savings from displayed dollars.
 
