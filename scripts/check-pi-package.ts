@@ -177,7 +177,7 @@ try {
   const converterUrl = pathToFileURL(join(pi, 'dist/convert.js')).href
   const packedRequest = JSON.parse(
     execFileSync(
-      '/opt/homebrew/bin/bun',
+      'bun',
       [
         '-e',
         `import { buildAnthropicRequest } from ${JSON.stringify(converterUrl)}; import { normalizeContext } from '@earendil-works/pi-ai'; const result = await buildAnthropicRequest('claude-sonnet-9', normalizeContext({ messages: [], systemPrompt: '', tools: [] }), { reasoning: 'low' }, { enabled: false, mode: 'explicit' }, false, undefined, {}, ${JSON.stringify(packedFuture)}); console.log(JSON.stringify(result.body))`,
