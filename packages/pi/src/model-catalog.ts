@@ -58,6 +58,11 @@ function adaptModel(
   branch: ConverterBranch,
 ): CortexKitAnthropicModel {
   const model = cloneModel(source)
+  // SDK warming assumes options.cacheRetention controls the wire TTL. Here the
+  // account-side claudeCache policy owns it, and CortexKit's explicit cacheKeep
+  // owns warming. Advertising SDK lifetimes would enable a second scheduler
+  // with the wrong TTL (and unsafe one-token replays on budget-thinking models).
+  delete model.promptCache
   const thinkingLevelMap = { ...model.thinkingLevelMap }
   if (branch === 'adaptive-summary') {
     // The converter cannot disable adaptive thinking; minimal duplicates low.

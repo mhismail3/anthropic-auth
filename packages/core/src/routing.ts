@@ -1,10 +1,8 @@
 import {
   type AccountStorage,
-  createEmptyStorage,
   getAccountStoragePath,
-  loadAccounts,
+  mutateAccountsPersistent,
   type RoutingMode,
-  saveAccounts,
 } from './accounts.ts'
 
 export const CLAUDE_ROUTING_COMMAND_NAME = 'claude-routing'
@@ -39,13 +37,10 @@ export async function setRoutingMode(
   mode: RoutingMode,
   path = getAccountStoragePath(),
 ) {
-  const storage = (await loadAccounts(path)) ?? createEmptyStorage()
-  storage.routing = {
-    ...(storage.routing ?? {}),
-    mode,
-  }
-  await saveAccounts(storage, path)
-  return storage
+  return mutateAccountsPersistent(path, (storage) => {
+    storage.routing = { ...(storage.routing ?? {}), mode }
+    return { storage, result: storage }
+  })
 }
 
 export function parseRoutingCommandAction(

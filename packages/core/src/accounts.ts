@@ -1862,6 +1862,8 @@ export function saveAccounts(
 }
 
 /** Read-modify-write account configuration under the existing config/state lock order.
+ * Configuration setters must read here, not before saveAccounts: serializing
+ * stale snapshots still loses unrelated settings (config-transactions.test.ts).
  * The callback is synchronous: network discovery must happen under its own outer
  * lease, never while holding the config lock. Do not call another persistence API
  * from the callback.
@@ -1874,13 +1876,19 @@ export function mutateAccountsPersistent<T>(
     options?: SaveAccountsOptions
     save?: boolean
   },
-  options: { assertAuthority?: () => Promise<void> } = {},
+  options: {
+    assertAuthority?: () => Promise<void>
+    initialStorage?: () => AccountStorage
+  } = {},
 ): Promise<T> {
   const resolvedPath = resolve(path)
   return enqueueSave(async () => {
     const lock = await acquireAccountConfigWriteLock(resolvedPath)
     try {
-      const current = (await loadAccounts(resolvedPath)) ?? createEmptyStorage()
+      const current =
+        (await loadAccounts(resolvedPath)) ??
+        options.initialStorage?.() ??
+        createEmptyStorage()
       const mutation = mutate(current)
       if (mutation.save !== false) {
         await options.assertAuthority?.()
@@ -2864,28 +2872,28 @@ export async function setCache1hPersistentEnabled(
   mode?: Cache1hMode,
   path = getAccountStoragePath(),
 ) {
-  const storage = (await loadAccounts(path)) ?? createEmptyStorage()
-  storage.claudeCache = {
-    ...(storage.claudeCache ?? {}),
-    enabled,
-    mode: mode ?? getCache1hPersistentMode(storage),
-  }
-  await saveAccounts(storage, path)
-  return storage
+  return mutateAccountsPersistent(path, (storage) => {
+    storage.claudeCache = {
+      ...(storage.claudeCache ?? {}),
+      enabled,
+      mode: mode ?? getCache1hPersistentMode(storage),
+    }
+    return { storage, result: storage }
+  })
 }
 
 export async function setCache1hPersistentMode(
   mode: Cache1hMode,
   path = getAccountStoragePath(),
 ) {
-  const storage = (await loadAccounts(path)) ?? createEmptyStorage()
-  storage.claudeCache = {
-    ...(storage.claudeCache ?? {}),
-    enabled: storage.claudeCache?.enabled === true,
-    mode,
-  }
-  await saveAccounts(storage, path)
-  return storage
+  return mutateAccountsPersistent(path, (storage) => {
+    storage.claudeCache = {
+      ...(storage.claudeCache ?? {}),
+      enabled: storage.claudeCache?.enabled === true,
+      mode,
+    }
+    return { storage, result: storage }
+  })
 }
 
 export function isDumpPersistentlyEnabled(storage: AccountStorage | null) {
@@ -2896,13 +2904,10 @@ export async function setDumpPersistentEnabled(
   enabled: boolean,
   path = getAccountStoragePath(),
 ) {
-  const storage = (await loadAccounts(path)) ?? createEmptyStorage()
-  storage.dump = {
-    ...(storage.dump ?? {}),
-    enabled,
-  }
-  await saveAccounts(storage, path)
-  return storage
+  return mutateAccountsPersistent(path, (storage) => {
+    storage.dump = { ...(storage.dump ?? {}), enabled }
+    return { storage, result: storage }
+  })
 }
 
 export function isFastModePersistentlyEnabled(storage: AccountStorage | null) {
@@ -2913,13 +2918,10 @@ export async function setFastModePersistentEnabled(
   enabled: boolean,
   path = getAccountStoragePath(),
 ) {
-  const storage = (await loadAccounts(path)) ?? createEmptyStorage()
-  storage.claudeFast = {
-    ...(storage.claudeFast ?? {}),
-    enabled,
-  }
-  await saveAccounts(storage, path)
-  return storage
+  return mutateAccountsPersistent(path, (storage) => {
+    storage.claudeFast = { ...(storage.claudeFast ?? {}), enabled }
+    return { storage, result: storage }
+  })
 }
 
 export async function setCacheKeepPersistentWindow(
@@ -2927,44 +2929,41 @@ export async function setCacheKeepPersistentWindow(
   endHour: number,
   path = getAccountStoragePath(),
 ) {
-  const storage = (await loadAccounts(path)) ?? createEmptyStorage()
-  storage.cacheKeep = {
-    ...(storage.cacheKeep ?? {}),
-    enabled: true,
-    always: false,
-    startHour,
-    endHour,
-  }
-  await saveAccounts(storage, path)
-  return storage
+  return mutateAccountsPersistent(path, (storage) => {
+    storage.cacheKeep = {
+      ...(storage.cacheKeep ?? {}),
+      enabled: true,
+      always: false,
+      startHour,
+      endHour,
+    }
+    return { storage, result: storage }
+  })
 }
 
 export async function setCacheKeepPersistentAlways(
   path = getAccountStoragePath(),
 ) {
-  const storage = (await loadAccounts(path)) ?? createEmptyStorage()
-  storage.cacheKeep = {
-    ...(storage.cacheKeep ?? {}),
-    enabled: true,
-    always: true,
-  }
-  delete storage.cacheKeep.startHour
-  delete storage.cacheKeep.endHour
-  await saveAccounts(storage, path)
-  return storage
+  return mutateAccountsPersistent(path, (storage) => {
+    storage.cacheKeep = {
+      ...(storage.cacheKeep ?? {}),
+      enabled: true,
+      always: true,
+    }
+    delete storage.cacheKeep.startHour
+    delete storage.cacheKeep.endHour
+    return { storage, result: storage }
+  })
 }
 
 export async function setCacheKeepPersistentEnabled(
   enabled: boolean,
   path = getAccountStoragePath(),
 ) {
-  const storage = (await loadAccounts(path)) ?? createEmptyStorage()
-  storage.cacheKeep = {
-    ...(storage.cacheKeep ?? {}),
-    enabled,
-  }
-  await saveAccounts(storage, path)
-  return storage
+  return mutateAccountsPersistent(path, (storage) => {
+    storage.cacheKeep = { ...(storage.cacheKeep ?? {}), enabled }
+    return { storage, result: storage }
+  })
 }
 
 export function isCacheKeepSubagentsEnabled(storage: AccountStorage | null) {
@@ -2975,13 +2974,10 @@ export async function setCacheKeepSubagentsEnabled(
   enabled: boolean,
   path = getAccountStoragePath(),
 ) {
-  const storage = (await loadAccounts(path)) ?? createEmptyStorage()
-  storage.cacheKeep = {
-    ...(storage.cacheKeep ?? {}),
-    subagents: enabled,
-  }
-  await saveAccounts(storage, path)
-  return storage
+  return mutateAccountsPersistent(path, (storage) => {
+    storage.cacheKeep = { ...(storage.cacheKeep ?? {}), subagents: enabled }
+    return { storage, result: storage }
+  })
 }
 
 export function isPrimePersistentlyEnabled(storage: AccountStorage | null) {
@@ -2992,13 +2988,10 @@ export async function setPrimePersistentEnabled(
   enabled: boolean,
   path = getAccountStoragePath(),
 ) {
-  const storage = (await loadAccounts(path)) ?? createEmptyStorage()
-  storage.prime = {
-    ...(storage.prime ?? {}),
-    enabled,
-  }
-  await saveAccounts(storage, path)
-  return storage
+  return mutateAccountsPersistent(path, (storage) => {
+    storage.prime = { ...(storage.prime ?? {}), enabled }
+    return { storage, result: storage }
+  })
 }
 
 /** Return the stable prime marker identity for an OAuth account. */
@@ -3442,12 +3435,10 @@ export async function setLogLevelPersistent(
   path = getAccountStoragePath(),
 ) {
   const { setLogLevel } = await import('./logger.ts')
-  const storage = (await loadAccounts(path)) ?? createEmptyStorage()
-  storage.logging = {
-    ...(storage.logging ?? {}),
-    level,
-  }
-  await saveAccounts(storage, path)
+  await mutateAccountsPersistent(path, (storage) => {
+    storage.logging = { ...(storage.logging ?? {}), level }
+    return { storage, result: undefined }
+  })
   setLogLevel(level)
 }
 
@@ -3713,10 +3704,10 @@ export async function setKillswitchPersistent(
   config: KillswitchConfig,
   path = getAccountStoragePath(),
 ) {
-  const storage = (await loadAccounts(path)) ?? createEmptyStorage()
-  storage.killswitch = config
-  await saveAccounts(storage, path)
-  return storage
+  return mutateAccountsPersistent(path, (storage) => {
+    storage.killswitch = config
+    return { storage, result: storage }
+  })
 }
 
 export async function removeAccountPersistent(

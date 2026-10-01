@@ -9,7 +9,6 @@ import {
   createEmptyStorage,
   detectClaustrumConnection,
   executeAccountCommand,
-  executeCache1hCommand,
   executeCacheKeepCommand,
   executeDumpCommand,
   executeFastModeCommand,
@@ -17,12 +16,10 @@ import {
   executePrimeCommand,
   executeRoutingCommand,
   formatEnrollmentStatus,
-  getCache1hPersistentMode,
   getCacheKeepWindow,
   getClaustrumMode,
   getPersistedLogLevel,
   getRoutingMode,
-  isCache1hPersistentlyEnabled,
   isCacheKeepAlways,
   isCacheKeepHybridActive,
   isCacheKeepPersistentlyEnabled,
@@ -44,7 +41,6 @@ import {
   saveAccountState,
   setAccountEnabledPersistent,
   setCache1hPersistentEnabled,
-  setCache1hPersistentMode,
   setCacheKeepPersistentAlways,
   setCacheKeepPersistentEnabled,
   setCacheKeepPersistentWindow,
@@ -59,6 +55,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from '@earendil-works/pi-coding-agent'
+import { getPiCachePolicy, setPiCacheMode } from './cache-policy.ts'
 import type { PiCustodyCommands } from './custody.ts'
 import { getPiAccountStoragePath } from './paths.ts'
 import {
@@ -84,34 +81,37 @@ export function registerCommands(
     description: 'Show or configure Claude 1-hour prompt cache mode',
     handler: async (args, ctx) => {
       const path = getPiAccountStoragePath()
-      const storage = await loadAccounts(path)
       const action = parseCache1hCommandAction(args ?? '')
-      const enabled = isCache1hPersistentlyEnabled(storage)
-      const mode = getCache1hPersistentMode(storage)
-
-      const nextEnabled =
+      // Acknowledge the committed transaction, never an optimistic snapshot
+      // read before another session's cache command completed.
+      const storage =
         action.type === 'enable'
-          ? true
+          ? await setCache1hPersistentEnabled(true, undefined, path)
           : action.type === 'disable'
-            ? false
-            : enabled
-      const nextMode = action.type === 'mode' ? action.mode : mode
-
-      if (action.type === 'enable') {
-        await setCache1hPersistentEnabled(true, undefined, path)
-      } else if (action.type === 'disable') {
-        await setCache1hPersistentEnabled(false, undefined, path)
-      } else if (action.type === 'mode') {
-        await setCache1hPersistentMode(action.mode, path)
-      }
+            ? await setCache1hPersistentEnabled(false, undefined, path)
+            : action.type === 'mode'
+              ? await setPiCacheMode(action.mode, path)
+              : await loadAccounts(path)
 
       notify(
         ctx,
-        executeCache1hCommand({
-          argumentsText: args ?? '',
-          enabled: nextEnabled,
-          mode: nextMode,
-        }),
+        [
+          ...(action.type === 'usage'
+            ? [
+                'Usage: /claude-cache [on|off|mode explicit|mode automatic|mode hybrid]',
+                '',
+              ]
+            : []),
+          '## Claude Cache Status',
+          `- Enabled: ${getPiCachePolicy(storage).enabled ? 'enabled' : 'disabled'}`,
+          `- Mode: ${getPiCachePolicy(storage).mode}`,
+          `- Persisted: ${path}`,
+          '- Scope: all sessions using this account configuration, including subagents',
+          '- Default: 1h explicit caching; an explicit off setting is preserved',
+          '- TTL: 1h when enabled; off retains default 5m caching',
+          '- Modes: explicit/hybrid = tool, system, initial prompt and conversation anchors; automatic = top-level cache_control only',
+          '- Cache keeping is separately opt-in and is not enabled by this command',
+        ].join('\n'),
         action.type === 'usage' ? 'warning' : 'info',
       )
     },

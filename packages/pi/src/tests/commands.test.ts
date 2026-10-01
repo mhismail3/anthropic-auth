@@ -83,6 +83,74 @@ afterAll(() => {
   expect(process.env.OPENCODE_ANTHROPIC_AUTH_STATE_FILE).toBeUndefined()
 })
 
+describe('claude-cache persistence', () => {
+  test('defaults to 1h explicit without a configuration write or setup commands', async () => {
+    const { pi, commands } = mockPi()
+    registerCommands(pi)
+    const { ctx, notified } = mockNotify()
+    await commands.get('claude-cache')!.handler('', ctx)
+    expect(notified.at(-1)).toContain('Enabled: enabled')
+    expect(notified.at(-1)).toContain('Mode: explicit')
+    expect(await Bun.file(accountPath).exists()).toBe(false)
+  })
+
+  test('mode changes retain the effective default and respect an explicit off choice', async () => {
+    const { pi, commands } = mockPi()
+    registerCommands(pi)
+    const handler = commands.get('claude-cache')!.handler
+    const { ctx, notified } = mockNotify()
+    await handler('mode automatic', ctx)
+    expect(JSON.parse(await readFile(accountPath, 'utf8')).claudeCache).toEqual(
+      {
+        enabled: true,
+        mode: 'automatic',
+      },
+    )
+    await handler('off', ctx)
+    await handler('mode explicit', ctx)
+    expect(JSON.parse(await readFile(accountPath, 'utf8')).claudeCache).toEqual(
+      {
+        enabled: false,
+        mode: 'explicit',
+      },
+    )
+    expect(notified.at(-1)).toContain('Enabled: disabled')
+  })
+
+  test('commands retain concurrent changes and report the Pi scope and committed state', async () => {
+    const { pi, commands } = mockPi()
+    registerCommands(pi)
+    const handler = commands.get('claude-cache')!.handler
+    const { ctx, notified } = mockNotify()
+    await Promise.all([handler('on', ctx), handler('mode explicit', ctx)])
+    expect(JSON.parse(await readFile(accountPath, 'utf8')).claudeCache).toEqual(
+      { enabled: true, mode: 'explicit' },
+    )
+    await handler('', ctx)
+    expect(notified.at(-1)).toContain('Enabled: enabled')
+    expect(notified.at(-1)).toContain('Mode: explicit')
+    expect(notified.at(-1)).toContain(accountPath)
+    expect(notified.at(-1)).toContain('including subagents')
+    expect(notified.at(-1)).not.toContain('OpenCode')
+    await handler('off', ctx)
+    expect(notified.at(-1)).toContain('off retains default 5m caching')
+  })
+
+  test('failed persistence never acknowledges success', async () => {
+    const blocker = join(tempDir, 'not-a-directory')
+    await writeFile(blocker, 'preserve')
+    process.env[ENV_KEY] = join(blocker, 'accounts.json')
+    const { pi, commands } = mockPi()
+    registerCommands(pi)
+    const { ctx, notified } = mockNotify()
+    await expect(
+      commands.get('claude-cache')!.handler('on', ctx),
+    ).rejects.toThrow()
+    expect(notified).toEqual([])
+    expect(await readFile(blocker, 'utf8')).toBe('preserve')
+  })
+})
+
 describe('claude-account persistence', () => {
   test('refuses custody changes without a host controller and preserves Pi config and state', async () => {
     const initial = {

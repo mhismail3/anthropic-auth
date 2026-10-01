@@ -16,7 +16,6 @@ import {
   FAST_MODE_BETA,
   FallbackAccountManager,
   fetchOAuthQuotaSnapshot,
-  getCache1hPersistentMode,
   getClaudeCodeIdentityForVerifiedAccount,
   getClaustrumMode,
   getDefaultCacheKeepRegistryDirectory,
@@ -31,7 +30,6 @@ import {
   getThinkingPrefixMismatchBehavior,
   hasThinkingBindingControls,
   isApiKeyAccount,
-  isCache1hPersistentlyEnabled,
   isCacheKeepHybridActive,
   isDumpPersistentlyEnabled,
   isFastModePersistentlyEnabled,
@@ -84,7 +82,12 @@ import {
   type ToolCall,
 } from '@earendil-works/pi-ai'
 
-import { buildAnthropicRequest, fromClaudeCodeToolName } from './convert.ts'
+import { getPiCachePolicy } from './cache-policy.ts'
+import {
+  buildAnthropicRequest,
+  describeCacheRequest,
+  fromClaudeCodeToolName,
+} from './convert.ts'
 import { requirePiEnrollment } from './custody.ts'
 import {
   getPiAccountStoragePath,
@@ -443,13 +446,25 @@ function createOutput(model: Model<Api>): AssistantMessage {
   }
 }
 
+type CacheCreation = {
+  ephemeral_5m_input_tokens?: number
+  ephemeral_1h_input_tokens?: number
+}
+type AnthropicUsage = {
+  input_tokens?: number
+  output_tokens?: number
+  cache_read_input_tokens?: number
+  cache_creation_input_tokens?: number
+  cache_creation?: CacheCreation
+}
+
 type AnthropicEvent = {
   type?: string
   index?: number
   content_block?: Record<string, unknown>
   delta?: Record<string, unknown>
-  message?: { usage?: Record<string, number> }
-  usage?: Record<string, number>
+  message?: { usage?: AnthropicUsage }
+  usage?: AnthropicUsage
 }
 
 type Block = (
@@ -463,7 +478,8 @@ type Block = (
 function updateUsage(
   model: Model<Api>,
   output: AssistantMessage,
-  usage?: Record<string, number>,
+  cacheCreation: CacheCreation,
+  usage?: AnthropicUsage,
 ) {
   if (!usage) return
   output.usage.input = usage.input_tokens ?? output.usage.input
@@ -477,7 +493,46 @@ function updateUsage(
     output.usage.output +
     output.usage.cacheRead +
     output.usage.cacheWrite
+  // Deltas often contain only output tokens. Retain the start-event TTL split,
+  // but use it only when it accounts for the current aggregate write count.
+  if (usage.cache_creation) {
+    for (const key of [
+      'ephemeral_5m_input_tokens',
+      'ephemeral_1h_input_tokens',
+    ] as const) {
+      const value = usage.cache_creation[key]
+      if (value !== undefined) cacheCreation[key] = value
+    }
+  }
   calculateCost(model, output.usage)
+  if (hasCompleteCacheCreation(cacheCreation, output.usage.cacheWrite)) {
+    // Anthropic charges 1.25x base input for 5m writes and 2x for 1h writes.
+    // The SDK catalog has only one write price; it cannot price mixed TTLs.
+    output.usage.cost.cacheWrite =
+      (model.cost.input *
+        (cacheCreation.ephemeral_5m_input_tokens * 1.25 +
+          cacheCreation.ephemeral_1h_input_tokens * 2)) /
+      1_000_000
+    const cost = output.usage.cost
+    cost.total = cost.input + cost.output + cost.cacheRead + cost.cacheWrite
+  }
+}
+
+function hasCompleteCacheCreation(
+  creation: CacheCreation,
+  total: number,
+): creation is Required<CacheCreation> {
+  const fiveMinute = creation.ephemeral_5m_input_tokens
+  const oneHour = creation.ephemeral_1h_input_tokens
+  return (
+    typeof fiveMinute === 'number' &&
+    typeof oneHour === 'number' &&
+    Number.isSafeInteger(fiveMinute) &&
+    Number.isSafeInteger(oneHour) &&
+    fiveMinute >= 0 &&
+    oneHour >= 0 &&
+    fiveMinute + oneHour === total
+  )
 }
 
 export function buildExplicitBaseMessagesUrl(baseURL: string) {
@@ -606,10 +661,7 @@ async function sendAnthropicRequest(options: {
     options.model.id,
     options.context,
     options.streamOptions,
-    {
-      enabled: isCache1hPersistentlyEnabled(storage),
-      mode: getCache1hPersistentMode(storage),
-    },
+    getPiCachePolicy(storage),
     isFastModePersistentlyEnabled(storage),
     identity,
     {
@@ -756,7 +808,24 @@ async function sendAnthropicRequest(options: {
     }
   }
 
-  if (options.apiAccount) return directFetch()
+  // Cache coverage is logged once per physical request, after its status is
+  // known, for both the direct API-key route and the relay route.
+  const logCacheCoverage = (response: Response): Response => {
+    const cache = describeCacheRequest(body, bodyText)
+    logger[
+      cache.conversationCached || !body.messages.length ? 'debug' : 'warn'
+    ]('pi-cache', 'request cache coverage', {
+      model: options.model.id,
+      requestId: response.headers.get('request-id')?.slice(0, 128),
+      status: response.status,
+      mode: getPiCachePolicy(storage).mode,
+      extendedTtl: getPiCachePolicy(storage).enabled,
+      ...cache,
+    })
+    return response
+  }
+
+  if (options.apiAccount) return logCacheCoverage(await directFetch())
 
   let relay401Attempt: ClaustrumScopedAttempt | undefined
   let relayReturned = false
@@ -821,7 +890,7 @@ async function sendAnthropicRequest(options: {
   }
   relayReturned = true
   if (relay401Attempt) await report(relay401Attempt, 401, 'relay_status_field')
-  return response
+  return logCacheCoverage(response)
 }
 
 function quotaSnapshotIsExhausted(
@@ -1630,6 +1699,8 @@ export function streamCortexKitAnthropic(
 
   void (async () => {
     const output = createOutput(model)
+    const cacheCreation: CacheCreation = {}
+    let response: Response | undefined
     stream.push({ type: 'start', partial: output })
 
     try {
@@ -1641,7 +1712,7 @@ export function streamCortexKitAnthropic(
       )
         throw new Error('Missing Anthropic OAuth access token')
       let toolNames: ReadonlyMap<string, string> = new Map()
-      const response = await executeWithFallback({
+      response = await executeWithFallback({
         model,
         context,
         streamOptions: options,
@@ -1662,7 +1733,7 @@ export function streamCortexKitAnthropic(
       const blocks = output.content as Block[]
       for await (const event of parseSse(response)) {
         if (event.type === 'message_start') {
-          updateUsage(model, output, event.message?.usage)
+          updateUsage(model, output, cacheCreation, event.message?.usage)
         } else if (event.type === 'content_block_start') {
           const block = event.content_block
           if (block?.type === 'text') {
@@ -1801,7 +1872,7 @@ export function streamCortexKitAnthropic(
           output.stopReason = mapStopReason(
             String(event.delta?.stop_reason ?? ''),
           )
-          updateUsage(model, output, event.usage)
+          updateUsage(model, output, cacheCreation, event.usage)
         } else if (event.type === 'error') {
           throw new Error(JSON.stringify(event))
         }
@@ -1822,6 +1893,26 @@ export function streamCortexKitAnthropic(
         error instanceof Error ? error.message : String(error)
       stream.push({ type: 'error', reason: output.stopReason, error: output })
       stream.end()
+    } finally {
+      if (output.usage.totalTokens > 0) {
+        logger.info('pi-cache', 'response cache usage', {
+          model: model.id,
+          requestId: response?.headers.get('request-id')?.slice(0, 128),
+          stopReason: output.stopReason,
+          input: output.usage.input,
+          output: output.usage.output,
+          cacheRead: output.usage.cacheRead,
+          cacheWrite: output.usage.cacheWrite,
+          cacheWrite5m: cacheCreation.ephemeral_5m_input_tokens,
+          cacheWrite1h: cacheCreation.ephemeral_1h_input_tokens,
+          writePricing: hasCompleteCacheCreation(
+            cacheCreation,
+            output.usage.cacheWrite,
+          )
+            ? 'response-ttl'
+            : 'catalog-estimate',
+        })
+      }
     }
   })()
 

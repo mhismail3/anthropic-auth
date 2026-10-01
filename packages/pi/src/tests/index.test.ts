@@ -244,7 +244,7 @@ describe('SDK-backed Anthropic model catalog', () => {
     'claude-mythos-5-1',
   ]
 
-  test('registers exact SDK names and IDs under CortexKit api and preserves SDK metadata', async () => {
+  test('preserves SDK metadata except transport, thinking and separately owned cache warming', async () => {
     const original = structuredClone(ANTHROPIC_SDK_MODELS)
     const { pi, providers } = mockPi()
     await cortexKitPiAnthropicAuth(pi)
@@ -279,8 +279,10 @@ describe('SDK-backed Anthropic model catalog', () => {
           api: _sdkApi,
           baseUrl: _sdkBaseUrl,
           thinkingLevelMap: _sdkThinkingLevelMap,
+          promptCache: _sdkWarmingLifetimes,
           ...sdkMetadata
         } = sdkModel
+        expect(registered.promptCache).toBeUndefined()
         expect(metadata).toEqual({ ...sdkMetadata, provider: 'anthropic' })
       }
     }

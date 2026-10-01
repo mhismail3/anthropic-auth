@@ -11,6 +11,13 @@ This repo is a CortexKit-maintained Anthropic auth monorepo for OpenCode and Pi.
 ### Patch Changes
 
 - Derive Pi's CortexKit Anthropic model catalog from the pinned SDK, preserving SDK metadata while applying the custom API/base URL and narrowly masking unsupported thinking levels. Admit only models with proven converter request shapes; keep Mythos 5/5.1 as explicit additions until the SDK lists them. Pin the Pi SDK dev dependencies to 0.99.1, the first release whose catalog lists Sonnet 5.5. Load that catalog through `@earendil-works/pi-ai/providers/all`, because Pi's extension loader does not alias `/providers/anthropic`; a test requires every Pi import to be in the loader's alias table.
+- Default Pi/Tron requests to one-hour explicit caching without setup commands; preserve explicit off settings and leave OpenCode defaults unchanged.
+- Keep mode-only changes transactional and aligned with the effective Pi policy. Validate the first packed-extension request without enabling commands.
+- Cache every non-empty user turn, including later plain-text messages and host notifications, without changing replayed text, images, tool arguments or signed thinking. Preserve static anchors and the four-breakpoint limit in explicit/hybrid mode.
+- Price cache writes from complete response TTL breakdowns, retaining partial-stream usage and labelling missing/inconsistent splits as catalog estimates. Add content-free `pi-cache` request/usage diagnostics.
+- Stop advertising SDK automatic-warming lifetimes for the independently controlled CortexKit cache policy; explicit CortexKit cache keeping remains available.
+- Make configuration updates transactional across sessions/processes so cache enablement/mode and unrelated settings cannot undo each other. Report committed cache settings with accurate Pi scope and retention semantics.
+- Add multi-turn serialized-request, accounting, command failure and configuration concurrency regressions.
 
 ## 2.0.0
 

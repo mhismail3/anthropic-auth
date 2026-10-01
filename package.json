@@ -13,6 +13,7 @@
     "check:claustrum-golden": "bun scripts/check-claustrum-golden.ts",
     "check:pi-dist-imports": "bun scripts/check-pi-dist-imports.ts",
     "check:workspace-lock": "node scripts/version-sync.mjs --check-lock",
+    "check:pi-package": "node scripts/check-pi-package.ts",
     "analyze:cache": "node scripts/analyze-cache-usage.mjs",
     "test": "bun run build && bun run check:pi-dist-imports && cd packages/core && bun test src/tests && cd ../opencode && bun run test && cd ../pi && bun run test && cd ../.. && bun run test:pi-host",
     "test:pi-host": "bun scripts/check-pi-tool-mapping.ts",

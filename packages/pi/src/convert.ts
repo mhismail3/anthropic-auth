@@ -230,18 +230,26 @@ function convertMessages(
     const message = messages[index]
     if (!message) continue
     if (message.role === 'user') {
-      if (typeof message.content === 'string') {
-        if (message.content.trim()) {
-          result.push({ role: 'user', content: sanitize(message.content) })
-        }
-      } else {
-        result.push({
-          role: 'user',
-          content: convertTextAndImages(
-            message.content as Array<TextContent | ImageContent>,
-          ),
-        })
-      }
+      const content =
+        typeof message.content === 'string'
+          ? sanitize(message.content)
+          : convertTextAndImages(
+              message.content as Array<TextContent | ImageContent>,
+            )
+      // Normalize every user turn, not only the newest one: a conversation
+      // cache marker needs a block, and replay must keep the same boundaries.
+      // Tool-result content retains its separate string/array contract.
+      const blocks =
+        typeof content === 'string'
+          ? content.trim()
+            ? [{ type: 'text', text: content }]
+            : []
+          : content.filter(
+              (block) =>
+                block.type !== 'text' ||
+                (typeof block.text === 'string' && block.text.trim()),
+            )
+      if (blocks.length) result.push({ role: 'user', content: blocks })
       continue
     }
 
@@ -585,6 +593,30 @@ function applyCacheMode(
   })
 }
 
+/** Scalar-only request diagnostics. Never traverse tool arguments or log prompt content. */
+export function describeCacheRequest(
+  body: AnthropicRequestBody,
+  bodyText: string,
+) {
+  let breakpoints = 0
+  let oneHourBreakpoints = 0
+  walkCacheControlHolders(body, (holder) => {
+    breakpoints++
+    if ((holder.cache_control as { ttl?: string }).ttl === '1h')
+      oneHourBreakpoints++
+  })
+  const lastUser = body.messages.findLast((message) => message.role === 'user')
+  const lastBlock = Array.isArray(lastUser?.content)
+    ? lastUser.content.at(-1)
+    : undefined
+  return {
+    requestBytes: Buffer.byteLength(bodyText, 'utf8'),
+    breakpoints,
+    oneHourBreakpoints,
+    conversationCached: Boolean(body.cache_control || lastBlock?.cache_control),
+  }
+}
+
 export async function buildAnthropicRequest(
   modelId: string,
   context: Context,
@@ -661,9 +693,8 @@ export async function buildAnthropicRequest(
     // that — and placing one after the first user message puts it behind content
     // that varies, which defeats the caching.
     //
-    // cache_control is set explicitly because addEphemeralCacheControl's
-    // message-level breakpoint only fires for array content on the *last* user
-    // message, which is not this one after the first turn.
+    // This anchor stays before the first user's words; the moving conversation
+    // anchor is on the last user block. Both are needed for prefix reuse.
     const prompt = splitPiSystemPrompt(systemPrompt)
     if (prompt.systemText) {
       system.push({ type: 'text', text: prompt.systemText })

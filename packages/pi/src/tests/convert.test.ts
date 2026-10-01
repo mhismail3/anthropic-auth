@@ -173,13 +173,31 @@ describe('convertMessages — basic transforms', () => {
   test('converts user text message', async () => {
     const messages = await buildMessages([userMsg('hello world')])
     expect(messages.length).toBe(1)
-    expect(messages[0]).toEqual({ role: 'user', content: 'hello world' })
+    expect(messages[0]).toEqual({
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: 'hello world',
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
+    })
   })
 
   test('skips empty user messages', async () => {
     const messages = await buildMessages([userMsg(''), userMsg('real message')])
     expect(messages.length).toBe(1)
-    expect(messages[0]).toEqual({ role: 'user', content: 'real message' })
+    expect(messages[0]).toEqual({
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: 'real message',
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
+    })
   })
 
   test('converts assistant text blocks', async () => {
@@ -278,7 +296,13 @@ describe('convertMessages — basic transforms', () => {
     const messages = await buildMessages([userMsg('hello \uD800 world')])
     expect(messages[0]).toEqual({
       role: 'user',
-      content: 'hello \uFFFD world',
+      content: [
+        {
+          type: 'text',
+          text: 'hello \uFFFD world',
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
     })
   })
 
@@ -289,7 +313,13 @@ describe('convertMessages — basic transforms', () => {
     const messages = await buildMessages([userMsg('hi \uD83D\uDE00 there')])
     expect(messages[0]).toEqual({
       role: 'user',
-      content: 'hi \uD83D\uDE00 there',
+      content: [
+        {
+          type: 'text',
+          text: 'hi \uD83D\uDE00 there',
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
     })
   })
 
@@ -465,10 +495,15 @@ describe('buildAnthropicRequest — Claude Code system[] shape', () => {
     expect(content[1]).toMatchObject({ type: 'text', text: 'hello' })
   })
 
-  test('leaves system[] and messages untouched when no prompt is set', async () => {
+  test('adds no prompt content when no prompt is set', async () => {
     const body = await buildBody([userMsg('hello')])
     expect(body.system).toHaveLength(2)
-    expect(body.messages[0]).toEqual({ role: 'user', content: 'hello' })
+    expect(body.messages[0]).toEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'hello', cache_control: { type: 'ephemeral' } },
+      ],
+    })
   })
 
   test('pins the Claude Code suffix by Pi session across compacted history', async () => {
@@ -1220,7 +1255,12 @@ describe('buildAnthropicRequest — host system prompt shapes', () => {
   test('treats an empty block list as no prompt', async () => {
     const body = await buildBody([])
     expect(body.system).toHaveLength(2)
-    expect(body.messages[0]).toEqual({ role: 'user', content: 'hello' })
+    expect(body.messages[0]).toEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'hello', cache_control: { type: 'ephemeral' } },
+      ],
+    })
   })
 })
 

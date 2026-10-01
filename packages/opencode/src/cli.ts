@@ -13,7 +13,7 @@ import {
   isOAuthAccount,
   isValidApiBaseURL,
   loadAccounts,
-  saveAccounts,
+  mutateAccountsPersistent,
   WORKER_SCRIPT,
 } from '@cortexkit/anthropic-auth-core'
 
@@ -256,17 +256,22 @@ export async function relaySetup(deps: RelaySetupDeps = {}) {
     defaultUrl ||
     requireText(await prompt('Relay Worker URL: '), 'Relay Worker URL')
 
-  // Provisioning can take minutes. Reload immediately before commit so the
-  // relay setup cannot overwrite fallback accounts changed while it was open.
-  const storage = (await loadAccounts()) ?? defaultStorage()
-  storage.relay = {
-    enabled: true,
-    url,
-    token: relayToken,
-    fallbackToDirect: true,
-    transport: 'http',
-  }
-  await saveAccounts(storage)
+  // Provisioning runs outside the lock; commit only its relay change against
+  // fresh configuration under the shared transaction, preserving other writers.
+  await mutateAccountsPersistent(
+    getAccountStoragePath(),
+    (storage) => {
+      storage.relay = {
+        enabled: true,
+        url,
+        token: relayToken,
+        fallbackToDirect: true,
+        transport: 'http',
+      }
+      return { storage, result: undefined }
+    },
+    { initialStorage: defaultStorage },
+  )
 
   console.log(`Relay enabled at ${url}`)
   console.log(`Config saved to ${getAccountStoragePath()}.`)
