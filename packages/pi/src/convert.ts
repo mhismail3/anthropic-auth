@@ -231,25 +231,29 @@ function convertMessages(
     const message = messages[index]
     if (!message) continue
     if (message.role === 'user') {
-      const content =
-        typeof message.content === 'string'
-          ? sanitize(message.content)
-          : convertTextAndImages(
-              message.content as Array<TextContent | ImageContent>,
-            )
       // Normalize every user turn, not only the newest one: a conversation
       // cache marker needs a block, and replay must keep the same boundaries.
-      // Tool-result content retains its separate string/array contract.
-      const blocks =
-        typeof content === 'string'
-          ? content.trim()
-            ? [{ type: 'text', text: content }]
-            : []
-          : content.filter(
-              (block) =>
-                block.type !== 'text' ||
-                (typeof block.text === 'string' && block.text.trim()),
-            )
+      // A user message's text parts stay separate blocks, as Pi's own Anthropic
+      // provider sends them: a host lays out a structured message as blocks so
+      // its cache breakpoints can land between them (Tron Home's memory view),
+      // and joining them would move every boundary and add a newline between
+      // parts. Tool-result content retains its separate string/array contract.
+      const parts =
+        typeof message.content === 'string'
+          ? undefined
+          : (message.content as Array<TextContent | ImageContent>)
+      const content: Array<Record<string, unknown>> = !parts
+        ? [{ type: 'text', text: sanitize(message.content as string) }]
+        : parts.some((item) => item.type === 'image')
+          ? (convertTextAndImages(parts) as Array<Record<string, unknown>>)
+          : parts
+              .filter((item): item is TextContent => item.type === 'text')
+              .map((item) => ({ type: 'text', text: sanitize(item.text) }))
+      const blocks = content.filter(
+        (block) =>
+          block.type !== 'text' ||
+          (typeof block.text === 'string' && block.text.trim()),
+      )
       if (blocks.length) result.push({ role: 'user', content: blocks })
       continue
     }
@@ -628,6 +632,13 @@ export async function buildAnthropicRequest(
   controls: {
     effortTransitions?: readonly MidConversationEffortTransition[]
     thinkingPrefixMismatchBehavior?: ThinkingPrefixMismatchBehavior
+    /**
+     * Pi's `options.onPayload`, bound to the dispatched model. Pi's custom-provider
+     * contract: call it before sending and send any replacement it returns. It
+     * sees the body with this provider's cache breakpoints placed, and runs
+     * before signing, so the billing signature covers what is sent.
+     */
+    onPayload?: (body: AnthropicRequestBody) => unknown | Promise<unknown>
   } = {},
   modelMetadata?: {
     api?: string
@@ -709,7 +720,7 @@ export async function buildAnthropicRequest(
     prependCachedPromptBlock(messages, prompt.messageText)
   }
 
-  const body: AnthropicRequestBody = {
+  let body: AnthropicRequestBody = {
     model: modelId,
     max_tokens: options?.maxTokens ?? 16_384,
     stream: true,
@@ -794,6 +805,10 @@ export async function buildAnthropicRequest(
     applyClaudeCodeMetadata(body, identity)
   }
 
+  const replaced = controls.onPayload
+    ? await controls.onPayload(body)
+    : undefined
+  if (replaced !== undefined) body = replaced as AnthropicRequestBody
   const unsigned = JSON.stringify(orderClaudeCodeBody(body))
   const bodyText = await signRequestBody(unsigned)
   // The stream decoder must use the exact wire-name snapshot that produced this

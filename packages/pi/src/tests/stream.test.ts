@@ -2,7 +2,12 @@ import { afterEach, describe, expect, mock, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadAccounts, saveAccounts } from '@cortexkit/anthropic-auth-core'
+import {
+  loadAccounts,
+  resetBillingHeaderCCH,
+  saveAccounts,
+  signRequestBody,
+} from '@cortexkit/anthropic-auth-core'
 import {
   buildExplicitBaseMessagesUrl,
   configureApiRouteHeaders,
@@ -924,6 +929,120 @@ describe('Pi API fallback routing helpers', () => {
     await events.return(undefined)
 
     expect(cancelled).toBe(false)
+  })
+})
+
+// Pi's custom-provider contract: a provider calls `options.onPayload` before
+// sending and uses any replacement it returns. Hosts rely on it to place their
+// own cache breakpoints (Tron Home marks its memory view there); without the
+// call a host's request layout silently never reaches the provider.
+describe('Pi onPayload hook', () => {
+  async function capture(
+    onPayload?: (payload: unknown, model: unknown) => unknown,
+  ): Promise<string> {
+    tempDir = await mkdtemp(join(tmpdir(), 'pi-on-payload-'))
+    const storagePath = join(tempDir, 'anthropic-auth.json')
+    process.env.PI_ANTHROPIC_AUTH_FILE = storagePath
+    await saveAccounts(
+      {
+        version: 1,
+        main: { type: 'opencode', provider: 'anthropic' },
+        accounts: [],
+      },
+      storagePath,
+    )
+    let sent = ''
+    globalThis.fetch = mock(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        if (input.toString().includes('/api/claude_cli/bootstrap')) {
+          return new Response(
+            JSON.stringify({
+              oauth_account: { account_uuid: 'pi-on-payload-account' },
+            }),
+          )
+        }
+        sent = String(init?.body)
+        return new Response(
+          [
+            'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1,"output_tokens":0}}}\n\n',
+            'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n',
+            'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+          ].join(''),
+          { status: 200 },
+        )
+      },
+    ) as unknown as typeof fetch
+    const context = {
+      systemPrompt: 'test',
+      tools: [],
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'host view' },
+            { type: 'text', text: 'host input' },
+          ],
+          timestamp: 0,
+        },
+      ],
+    } as any
+    const stream = streamCortexKitAnthropic(anthropicModel, context, {
+      apiKey: 'sk-ant-oat-pi-on-payload',
+      sessionId: 'ses_pi_on_payload',
+      ...(onPayload ? { onPayload } : {}),
+    } as any)
+    for await (const _event of stream) {
+      // Drain the provider stream.
+    }
+    return sent
+  }
+
+  test('sends the payload the hook returns, signed after the hook', async () => {
+    const seen: Array<{ payload: Record<string, any>; model: unknown }> = []
+    const sent = await capture((payload, model) => {
+      const body = payload as Record<string, any>
+      seen.push({ payload: structuredClone(body), model })
+      // A host breakpoint on its own block, copying the provider's control.
+      const user = body.messages.find((message: any) => message.role === 'user')
+      const view = user.content.find((block: any) => block.text === 'host view')
+      view.cache_control = { type: 'ephemeral', ttl: '1h' }
+      return body
+    })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.model).toBe(anthropicModel)
+    // The hook sees the provider's own breakpoints already placed.
+    expect(JSON.stringify(seen[0]!.payload)).toContain('cache_control')
+    const body = JSON.parse(sent)
+    const user = body.messages.find((message: any) => message.role === 'user')
+    expect(
+      user.content.find((block: any) => block.text === 'host view')
+        ?.cache_control,
+    ).toEqual({ type: 'ephemeral', ttl: '1h' })
+    // Signed over the replaced body: re-signing the sent body reproduces it.
+    expect(await signRequestBody(resetBillingHeaderCCH(sent))).toBe(sent)
+  })
+
+  test('keeps the provider payload when the hook returns nothing', async () => {
+    // Each request carries its own session metadata and signature, so compare
+    // the bodies without them.
+    const stable = (sent: string) =>
+      JSON.stringify({
+        ...JSON.parse(resetBillingHeaderCCH(sent)),
+        metadata: undefined,
+      })
+    const withoutHook = await capture()
+    const withVoidHook = await capture(() => undefined)
+    expect(stable(withVoidHook)).toBe(stable(withoutHook))
+  })
+
+  test("keeps a user message's text parts as separate blocks", async () => {
+    const body = JSON.parse(await capture())
+    const user = body.messages.find((message: any) => message.role === 'user')
+    const texts = user.content
+      .filter((block: any) => block.type === 'text')
+      .map((block: any) => block.text)
+    expect(texts).toContain('host view')
+    expect(texts).toContain('host input')
   })
 })
 
